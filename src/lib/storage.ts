@@ -11,10 +11,11 @@ async function ensureDataFile(): Promise<void> {
     try {
       await fs.access(DATA_FILE);
     } catch {
+      console.log("[storage] Creating empty records file");
       await fs.writeFile(DATA_FILE, JSON.stringify([]));
     }
   } catch (err) {
-    console.error("Failed to init data file:", err);
+    console.error("[storage] Failed to init data file:", err);
   }
 }
 
@@ -22,7 +23,9 @@ export async function getAllRecords(): Promise<ValidationRecord[]> {
   await ensureDataFile();
   try {
     const raw = await fs.readFile(DATA_FILE, "utf-8");
-    return JSON.parse(raw);
+    const records = JSON.parse(raw);
+    console.log(`[storage] getAllRecords: loaded ${records.length} record(s)`);
+    return records;
   } catch {
     return [];
   }
@@ -33,49 +36,82 @@ export async function saveRecord(record: ValidationRecord): Promise<void> {
   const records = await getAllRecords();
   records.unshift(record);
   await fs.writeFile(DATA_FILE, JSON.stringify(records, null, 2));
+  console.log(
+    `[storage] saveRecord: saved record ${record.id} (status=${record.aiValidation.status})`,
+  );
 }
 
-export async function saveBatchRecords(newRecords: ValidationRecord[]): Promise<void> {
+export async function saveBatchRecords(
+  newRecords: ValidationRecord[],
+): Promise<void> {
   await ensureDataFile();
   const records = await getAllRecords();
   const merged = [...newRecords, ...records];
   await fs.writeFile(DATA_FILE, JSON.stringify(merged, null, 2));
+  console.log(
+    `[storage] saveBatchRecords: added ${newRecords.length} record(s), total now ${merged.length}`,
+  );
 }
 
 export async function getCorrectionLogs(): Promise<ValidationRecord[]> {
   const records = await getAllRecords();
-  return records.filter(
-    (r) => r.aiValidation.status === "INCORRECT" || r.aiValidation.status === "NEED_REVIEW"
+  const logs = records.filter(
+    (r) =>
+      r.aiValidation.status === "INCORRECT" ||
+      r.aiValidation.status === "NEED_REVIEW",
   );
+  console.log(`[storage] getCorrectionLogs: returning ${logs.length} log(s)`);
+  return logs;
 }
 
 export async function getVerifiedAssets(): Promise<ValidationRecord[]> {
   const records = await getAllRecords();
-  return records.filter((r) => r.aiValidation.status === "VALID");
+  const verified = records.filter((r) => r.aiValidation.status === "VALID");
+  console.log(
+    `[storage] getVerifiedAssets: returning ${verified.length} verified asset(s)`,
+  );
+  return verified;
 }
 
 export async function getQualityMetrics(): Promise<QualityMetrics> {
   const records = await getAllRecords();
   const total = records.length;
+  console.log(`[storage] getQualityMetrics: computing over ${total} record(s)`);
 
   if (total === 0) {
+    console.log(
+      "[storage] getQualityMetrics: no records, returning empty metrics",
+    );
     return {
       totalTested: 0,
       valid: 0,
       needReview: 0,
       incorrect: 0,
       overallConfidence: 0,
-      accuracyPerLevel: { road: 0, village: 0, district: 0, city: 0, province: 0 },
+      accuracyPerLevel: {
+        road: 0,
+        village: 0,
+        district: 0,
+        city: 0,
+        province: 0,
+      },
       topErrors: [],
       errorDistribution: [],
     };
   }
 
   const valid = records.filter((r) => r.aiValidation.status === "VALID").length;
-  const needReview = records.filter((r) => r.aiValidation.status === "NEED_REVIEW").length;
-  const incorrect = records.filter((r) => r.aiValidation.status === "INCORRECT").length;
+  const needReview = records.filter(
+    (r) => r.aiValidation.status === "NEED_REVIEW",
+  ).length;
+  const incorrect = records.filter(
+    (r) => r.aiValidation.status === "INCORRECT",
+  ).length;
 
-  const totalConfidence = records.reduce((acc, r) => acc + (r.aiValidation.confidenceScore || 0), 0);
+  const totalConfidence = records.reduce(
+    (acc, r) => acc + (r.aiValidation.confidenceScore || 0),
+    0,
+  );
   const overallConfidence = Math.round((totalConfidence / total) * 10) / 10;
 
   const errorCounts: Record<string, number> = {};
@@ -96,7 +132,8 @@ export async function getQualityMetrics(): Promise<QualityMetrics> {
     }
   }
 
-  const calcAcc = (errors: number) => Math.max(0, Math.round(((total - errors) / total) * 1000) / 10);
+  const calcAcc = (errors: number) =>
+    Math.max(0, Math.round(((total - errors) / total) * 1000) / 10);
 
   const errorDistribution = Object.entries(errorCounts)
     .map(([type, count]) => ({
@@ -110,6 +147,10 @@ export async function getQualityMetrics(): Promise<QualityMetrics> {
     errorType: e.errorType,
     count: e.count,
   }));
+
+  console.log(
+    `[storage] getQualityMetrics: total=${total}, valid=${valid}, needReview=${needReview}, incorrect=${incorrect}, overallConfidence=${overallConfidence}%`,
+  );
 
   return {
     totalTested: total,

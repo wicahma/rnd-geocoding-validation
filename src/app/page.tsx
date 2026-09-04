@@ -10,7 +10,9 @@ import {
 import { INDONESIA_PROVINCES } from "@/lib/sampler";
 
 export default function Home() {
-  const [activeTab, setActiveTab] = useState<"test" | "logs" | "metrics">("test");
+  const [activeTab, setActiveTab] = useState<"test" | "logs" | "metrics">(
+    "test",
+  );
   const [lat, setLat] = useState("-6.2146");
   const [lon, setLon] = useState("106.8485");
   const [expected, setExpected] = useState<ExpectedAddress>({
@@ -23,34 +25,49 @@ export default function Home() {
   });
 
   const [loading, setLoading] = useState(false);
-  const [latestRecord, setLatestRecord] = useState<ValidationRecord | null>(null);
+  const [latestRecord, setLatestRecord] = useState<ValidationRecord | null>(
+    null,
+  );
   const [records, setRecords] = useState<ValidationRecord[]>([]);
   const [metrics, setMetrics] = useState<QualityMetrics | null>(null);
-  const [selectedProvince, setSelectedProvince] = useState(INDONESIA_PROVINCES[10].name); // DKI Jakarta
+  const [selectedProvince, setSelectedProvince] = useState(
+    INDONESIA_PROVINCES[10].name,
+  ); // DKI Jakarta
   const [gridSize, setGridSize] = useState(2);
   const [batchCount, setBatchCount] = useState(5);
   const [errorMsg, setErrorMsg] = useState("");
 
   useEffect(() => {
+    console.log("[page] Home mounted - fetching initial metrics & records");
     fetchMetrics();
     fetchRecords();
   }, []);
 
   const fetchMetrics = async () => {
+    console.log("[page] fetchMetrics called");
     try {
       const res = await fetch("/api/analytics");
-      if (res.ok) setMetrics(await res.json());
+      if (res.ok) {
+        const m = await res.json();
+        console.log(`[page] fetchMetrics: total=${m?.totalTested}`);
+        setMetrics(m);
+      }
     } catch (e) {
-      console.error(e);
+      console.error("[page] fetchMetrics error:", e);
     }
   };
 
   const fetchRecords = async (type?: string) => {
+    console.log(`[page] fetchRecords called (type=${type || "all"})`);
     try {
       const res = await fetch(`/api/corrections${type ? `?type=${type}` : ""}`);
-      if (res.ok) setRecords(await res.json());
+      if (res.ok) {
+        const recs = await res.json();
+        console.log(`[page] fetchRecords: got ${recs?.length ?? 0} record(s)`);
+        setRecords(recs);
+      }
     } catch (e) {
-      console.error(e);
+      console.error("[page] fetchRecords error:", e);
     }
   };
 
@@ -58,6 +75,7 @@ export default function Home() {
     e.preventDefault();
     setLoading(true);
     setErrorMsg("");
+    console.log(`[page] handleSingleTest: coord=${lat},${lon}`);
     try {
       const res = await fetch("/api/validate", {
         method: "POST",
@@ -72,10 +90,14 @@ export default function Home() {
         throw new Error(err.error || "Validation failed");
       }
       const data = await res.json();
+      console.log(
+        `[page] handleSingleTest success: status=${data?.aiValidation?.status}, confidence=${data?.aiValidation?.confidenceScore}`,
+      );
       setLatestRecord(data);
       fetchMetrics();
       fetchRecords();
     } catch (err: unknown) {
+      console.error("[page] handleSingleTest error:", err);
       if (err instanceof Error) setErrorMsg(err.message);
       else setErrorMsg(String(err));
     } finally {
@@ -86,9 +108,17 @@ export default function Home() {
   const handleGridSample = async () => {
     setLoading(true);
     setErrorMsg("");
+    console.log(
+      `[page] handleGridSample: province=${selectedProvince}, gridSize=${gridSize}`,
+    );
     try {
       const prov = INDONESIA_PROVINCES.find((p) => p.name === selectedProvince);
-      if (!prov) return;
+      if (!prov) {
+        console.warn(
+          `[page] handleGridSample: province ${selectedProvince} not found`,
+        );
+        return;
+      }
       const [latMin, lonMin, latMax, lonMax] = prov.bounds;
       const coords: Coordinate[] = [];
       const latStep = (latMax - latMin) / gridSize;
@@ -114,10 +144,12 @@ export default function Home() {
         throw new Error(err.error || "Batch validation failed");
       }
 
+      console.log(`[page] handleGridSample success: batch submitted`);
       fetchMetrics();
       fetchRecords();
       setActiveTab("logs");
     } catch (err: unknown) {
+      console.error("[page] handleGridSample error:", err);
       if (err instanceof Error) setErrorMsg(err.message);
       else setErrorMsg(String(err));
     } finally {
@@ -128,14 +160,22 @@ export default function Home() {
   const handleRandomSample = async () => {
     setLoading(true);
     setErrorMsg("");
+    console.log(`[page] handleRandomSample: batchCount=${batchCount}`);
     try {
       const coords: Coordinate[] = [];
       for (let i = 0; i < batchCount; i++) {
-        const prov = INDONESIA_PROVINCES[Math.floor(Math.random() * INDONESIA_PROVINCES.length)];
+        const prov =
+          INDONESIA_PROVINCES[
+            Math.floor(Math.random() * INDONESIA_PROVINCES.length)
+          ];
         const [latMin, lonMin, latMax, lonMax] = prov.bounds;
         coords.push({
-          lat: Math.round((latMin + Math.random() * (latMax - latMin)) * 1e6) / 1e6,
-          lon: Math.round((lonMin + Math.random() * (lonMax - lonMin)) * 1e6) / 1e6,
+          lat:
+            Math.round((latMin + Math.random() * (latMax - latMin)) * 1e6) /
+            1e6,
+          lon:
+            Math.round((lonMin + Math.random() * (lonMax - lonMin)) * 1e6) /
+            1e6,
         });
       }
 
@@ -150,10 +190,12 @@ export default function Home() {
         throw new Error(err.error || "Random sampling failed");
       }
 
+      console.log(`[page] handleRandomSample success: batch submitted`);
       fetchMetrics();
       fetchRecords();
       setActiveTab("logs");
     } catch (err: unknown) {
+      console.error("[page] handleRandomSample error:", err);
       if (err instanceof Error) setErrorMsg(err.message);
       else setErrorMsg(String(err));
     } finally {
@@ -162,7 +204,14 @@ export default function Home() {
   };
 
   const hasExpectedData = (exp: ExpectedAddress) =>
-    Boolean(exp.road || exp.village || exp.district || exp.city || exp.province || exp.postcode);
+    Boolean(
+      exp.road ||
+      exp.village ||
+      exp.district ||
+      exp.city ||
+      exp.province ||
+      exp.postcode,
+    );
 
   return (
     <main className="min-h-screen bg-neutral-950 text-neutral-100 p-6 md:p-12 font-mono">
@@ -234,7 +283,9 @@ export default function Home() {
                 <form onSubmit={handleSingleTest} className="space-y-4">
                   <div className="grid grid-cols-2 gap-2">
                     <div>
-                      <label className="block text-xs text-neutral-400 mb-1">Latitude</label>
+                      <label className="block text-xs text-neutral-400 mb-1">
+                        Latitude
+                      </label>
                       <input
                         type="text"
                         value={lat}
@@ -245,7 +296,9 @@ export default function Home() {
                       />
                     </div>
                     <div>
-                      <label className="block text-xs text-neutral-400 mb-1">Longitude</label>
+                      <label className="block text-xs text-neutral-400 mb-1">
+                        Longitude
+                      </label>
                       <input
                         type="text"
                         value={lon}
@@ -265,7 +318,9 @@ export default function Home() {
                       type="text"
                       placeholder="Road / Jl."
                       value={expected.road}
-                      onChange={(e) => setExpected({ ...expected, road: e.target.value })}
+                      onChange={(e) =>
+                        setExpected({ ...expected, road: e.target.value })
+                      }
                       className="w-full bg-neutral-950 border border-neutral-800 p-2 text-xs text-white"
                     />
                     <div className="grid grid-cols-2 gap-2">
@@ -273,14 +328,18 @@ export default function Home() {
                         type="text"
                         placeholder="Kelurahan / Desa"
                         value={expected.village}
-                        onChange={(e) => setExpected({ ...expected, village: e.target.value })}
+                        onChange={(e) =>
+                          setExpected({ ...expected, village: e.target.value })
+                        }
                         className="w-full bg-neutral-950 border border-neutral-800 p-2 text-xs text-white"
                       />
                       <input
                         type="text"
                         placeholder="Kecamatan"
                         value={expected.district}
-                        onChange={(e) => setExpected({ ...expected, district: e.target.value })}
+                        onChange={(e) =>
+                          setExpected({ ...expected, district: e.target.value })
+                        }
                         className="w-full bg-neutral-950 border border-neutral-800 p-2 text-xs text-white"
                       />
                     </div>
@@ -289,14 +348,18 @@ export default function Home() {
                         type="text"
                         placeholder="Kabupaten / Kota"
                         value={expected.city}
-                        onChange={(e) => setExpected({ ...expected, city: e.target.value })}
+                        onChange={(e) =>
+                          setExpected({ ...expected, city: e.target.value })
+                        }
                         className="w-full bg-neutral-950 border border-neutral-800 p-2 text-xs text-white"
                       />
                       <input
                         type="text"
                         placeholder="Provinsi"
                         value={expected.province}
-                        onChange={(e) => setExpected({ ...expected, province: e.target.value })}
+                        onChange={(e) =>
+                          setExpected({ ...expected, province: e.target.value })
+                        }
                         className="w-full bg-neutral-950 border border-neutral-800 p-2 text-xs text-white"
                       />
                     </div>
@@ -307,7 +370,9 @@ export default function Home() {
                     disabled={loading}
                     className="w-full bg-white text-black font-semibold uppercase py-2.5 text-xs tracking-wider hover:bg-neutral-200 transition disabled:opacity-50"
                   >
-                    {loading ? "Processing Pipeline..." : "Execute Validation Pipeline"}
+                    {loading
+                      ? "Processing Pipeline..."
+                      : "Execute Validation Pipeline"}
                   </button>
                 </form>
               </div>
@@ -318,7 +383,9 @@ export default function Home() {
                 </h2>
                 <div className="space-y-4">
                   <div>
-                    <label className="block text-xs text-neutral-400 mb-1">Target Province</label>
+                    <label className="block text-xs text-neutral-400 mb-1">
+                      Target Province
+                    </label>
                     <select
                       value={selectedProvince}
                       onChange={(e) => setSelectedProvince(e.target.value)}
@@ -333,7 +400,8 @@ export default function Home() {
                   </div>
                   <div>
                     <label className="block text-xs text-neutral-400 mb-1">
-                      Grid Density ({gridSize}x{gridSize} = {gridSize * gridSize} points)
+                      Grid Density ({gridSize}x{gridSize} ={" "}
+                      {gridSize * gridSize} points)
                     </label>
                     <input
                       type="range"
@@ -359,7 +427,9 @@ export default function Home() {
                       min="1"
                       max="20"
                       value={batchCount}
-                      onChange={(e) => setBatchCount(parseInt(e.target.value) || 1)}
+                      onChange={(e) =>
+                        setBatchCount(parseInt(e.target.value) || 1)
+                      }
                       className="w-20 bg-neutral-950 border border-neutral-800 p-2 text-xs text-white"
                     />
                     <button
@@ -380,8 +450,12 @@ export default function Home() {
                 <div className="border border-neutral-800 bg-neutral-900/40 p-6 space-y-6">
                   <div className="flex justify-between items-center border-b border-neutral-800 pb-4">
                     <div>
-                      <span className="text-xs text-neutral-400 uppercase">Test Execution Result</span>
-                      <p className="text-xs text-neutral-500">{latestRecord.testedAt}</p>
+                      <span className="text-xs text-neutral-400 uppercase">
+                        Test Execution Result
+                      </span>
+                      <p className="text-xs text-neutral-500">
+                        {latestRecord.testedAt}
+                      </p>
                     </div>
                     <div className="flex items-center gap-2">
                       <span
@@ -389,8 +463,8 @@ export default function Home() {
                           latestRecord.aiValidation.status === "VALID"
                             ? "bg-green-950 text-green-400 border border-green-800"
                             : latestRecord.aiValidation.status === "NEED_REVIEW"
-                            ? "bg-yellow-950 text-yellow-400 border border-yellow-800"
-                            : "bg-red-950 text-red-400 border border-red-800"
+                              ? "bg-yellow-950 text-yellow-400 border border-yellow-800"
+                              : "bg-red-950 text-red-400 border border-red-800"
                         }`}
                       >
                         {latestRecord.aiValidation.status}
@@ -407,12 +481,30 @@ export default function Home() {
                         Nominatim Result
                       </h3>
                       <div className="text-xs space-y-1">
-                        <p><span className="text-neutral-500">Road:</span> {latestRecord.nominatimResult.road || "-"}</p>
-                        <p><span className="text-neutral-500">Kelurahan:</span> {latestRecord.nominatimResult.village || "-"}</p>
-                        <p><span className="text-neutral-500">Kecamatan:</span> {latestRecord.nominatimResult.district || "-"}</p>
-                        <p><span className="text-neutral-500">Kota:</span> {latestRecord.nominatimResult.city || "-"}</p>
-                        <p><span className="text-neutral-500">Provinsi:</span> {latestRecord.nominatimResult.state || "-"}</p>
-                        <p><span className="text-neutral-500">Postal Code:</span> {latestRecord.nominatimResult.postcode || "-"}</p>
+                        <p>
+                          <span className="text-neutral-500">Road:</span>{" "}
+                          {latestRecord.nominatimResult.road || "-"}
+                        </p>
+                        <p>
+                          <span className="text-neutral-500">Kelurahan:</span>{" "}
+                          {latestRecord.nominatimResult.village || "-"}
+                        </p>
+                        <p>
+                          <span className="text-neutral-500">Kecamatan:</span>{" "}
+                          {latestRecord.nominatimResult.district || "-"}
+                        </p>
+                        <p>
+                          <span className="text-neutral-500">Kota:</span>{" "}
+                          {latestRecord.nominatimResult.city || "-"}
+                        </p>
+                        <p>
+                          <span className="text-neutral-500">Provinsi:</span>{" "}
+                          {latestRecord.nominatimResult.state || "-"}
+                        </p>
+                        <p>
+                          <span className="text-neutral-500">Postal Code:</span>{" "}
+                          {latestRecord.nominatimResult.postcode || "-"}
+                        </p>
                       </div>
                     </div>
 
@@ -421,12 +513,45 @@ export default function Home() {
                         Expected / AI Corrected
                       </h3>
                       <div className="text-xs space-y-1">
-                        <p><span className="text-neutral-500">Road:</span> {latestRecord.aiValidation.expectedAddress?.road || latestRecord.expectedAddress?.road || "-"}</p>
-                        <p><span className="text-neutral-500">Kelurahan:</span> {latestRecord.aiValidation.expectedAddress?.village || latestRecord.expectedAddress?.village || "-"}</p>
-                        <p><span className="text-neutral-500">Kecamatan:</span> {latestRecord.aiValidation.expectedAddress?.district || latestRecord.expectedAddress?.district || "-"}</p>
-                        <p><span className="text-neutral-500">Kota:</span> {latestRecord.aiValidation.expectedAddress?.city || latestRecord.expectedAddress?.city || "-"}</p>
-                        <p><span className="text-neutral-500">Provinsi:</span> {latestRecord.aiValidation.expectedAddress?.province || latestRecord.expectedAddress?.province || "-"}</p>
-                        <p><span className="text-neutral-500">Postal Code:</span> {latestRecord.aiValidation.expectedAddress?.postcode || latestRecord.expectedAddress?.postcode || "-"}</p>
+                        <p>
+                          <span className="text-neutral-500">Road:</span>{" "}
+                          {latestRecord.aiValidation.expectedAddress?.road ||
+                            latestRecord.expectedAddress?.road ||
+                            "-"}
+                        </p>
+                        <p>
+                          <span className="text-neutral-500">Kelurahan:</span>{" "}
+                          {latestRecord.aiValidation.expectedAddress?.village ||
+                            latestRecord.expectedAddress?.village ||
+                            "-"}
+                        </p>
+                        <p>
+                          <span className="text-neutral-500">Kecamatan:</span>{" "}
+                          {latestRecord.aiValidation.expectedAddress
+                            ?.district ||
+                            latestRecord.expectedAddress?.district ||
+                            "-"}
+                        </p>
+                        <p>
+                          <span className="text-neutral-500">Kota:</span>{" "}
+                          {latestRecord.aiValidation.expectedAddress?.city ||
+                            latestRecord.expectedAddress?.city ||
+                            "-"}
+                        </p>
+                        <p>
+                          <span className="text-neutral-500">Provinsi:</span>{" "}
+                          {latestRecord.aiValidation.expectedAddress
+                            ?.province ||
+                            latestRecord.expectedAddress?.province ||
+                            "-"}
+                        </p>
+                        <p>
+                          <span className="text-neutral-500">Postal Code:</span>{" "}
+                          {latestRecord.aiValidation.expectedAddress
+                            ?.postcode ||
+                            latestRecord.expectedAddress?.postcode ||
+                            "-"}
+                        </p>
                       </div>
                     </div>
                   </div>
@@ -502,19 +627,29 @@ export default function Home() {
                         {r.coordinate.lat}, {r.coordinate.lon}
                       </td>
                       <td className="p-3">
-                        <div className="text-neutral-300">{r.nominatimResult.road || "(no road)"}</div>
+                        <div className="text-neutral-300">
+                          {r.nominatimResult.road || "(no road)"}
+                        </div>
                         <div className="text-neutral-500 text-[11px]">
-                          {r.nominatimResult.village || "-"}, {r.nominatimResult.district || "-"},{" "}
+                          {r.nominatimResult.village || "-"},{" "}
+                          {r.nominatimResult.district || "-"},{" "}
                           {r.nominatimResult.city || "-"}
                         </div>
                       </td>
                       <td className="p-3">
                         <div className="text-neutral-300">
-                          {r.aiValidation.expectedAddress?.road || r.expectedAddress?.road || "-"}
+                          {r.aiValidation.expectedAddress?.road ||
+                            r.expectedAddress?.road ||
+                            "-"}
                         </div>
                         <div className="text-neutral-500 text-[11px]">
-                          {r.aiValidation.expectedAddress?.village || r.expectedAddress?.village || "-"},{" "}
-                          {r.aiValidation.expectedAddress?.district || r.expectedAddress?.district || "-"}
+                          {r.aiValidation.expectedAddress?.village ||
+                            r.expectedAddress?.village ||
+                            "-"}
+                          ,{" "}
+                          {r.aiValidation.expectedAddress?.district ||
+                            r.expectedAddress?.district ||
+                            "-"}
                         </div>
                       </td>
                       <td className="p-3">
@@ -551,7 +686,10 @@ export default function Home() {
                   ))}
                   {records.length === 0 && (
                     <tr>
-                      <td colSpan={6} className="p-8 text-center text-neutral-600">
+                      <td
+                        colSpan={6}
+                        className="p-8 text-center text-neutral-600"
+                      >
                         No validation records available yet.
                       </td>
                     </tr>
@@ -566,20 +704,36 @@ export default function Home() {
           <div className="space-y-6">
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
               <div className="border border-neutral-800 bg-neutral-900/40 p-4">
-                <span className="text-[10px] uppercase text-neutral-500 font-bold">Total Tested</span>
-                <p className="text-2xl font-bold text-white mt-1">{metrics.totalTested.toLocaleString()}</p>
+                <span className="text-[10px] uppercase text-neutral-500 font-bold">
+                  Total Tested
+                </span>
+                <p className="text-2xl font-bold text-white mt-1">
+                  {metrics.totalTested.toLocaleString()}
+                </p>
               </div>
               <div className="border border-neutral-800 bg-neutral-900/40 p-4">
-                <span className="text-[10px] uppercase text-green-500 font-bold">Valid</span>
-                <p className="text-2xl font-bold text-green-400 mt-1">{metrics.valid.toLocaleString()}</p>
+                <span className="text-[10px] uppercase text-green-500 font-bold">
+                  Valid
+                </span>
+                <p className="text-2xl font-bold text-green-400 mt-1">
+                  {metrics.valid.toLocaleString()}
+                </p>
               </div>
               <div className="border border-neutral-800 bg-neutral-900/40 p-4">
-                <span className="text-[10px] uppercase text-yellow-500 font-bold">Need Review</span>
-                <p className="text-2xl font-bold text-yellow-400 mt-1">{metrics.needReview.toLocaleString()}</p>
+                <span className="text-[10px] uppercase text-yellow-500 font-bold">
+                  Need Review
+                </span>
+                <p className="text-2xl font-bold text-yellow-400 mt-1">
+                  {metrics.needReview.toLocaleString()}
+                </p>
               </div>
               <div className="border border-neutral-800 bg-neutral-900/40 p-4">
-                <span className="text-[10px] uppercase text-neutral-400 font-bold">Overall Confidence</span>
-                <p className="text-2xl font-bold text-white mt-1">{metrics.overallConfidence}%</p>
+                <span className="text-[10px] uppercase text-neutral-400 font-bold">
+                  Overall Confidence
+                </span>
+                <p className="text-2xl font-bold text-white mt-1">
+                  {metrics.overallConfidence}%
+                </p>
               </div>
             </div>
 
@@ -589,20 +743,22 @@ export default function Home() {
                   Accuracy per Administrative Level
                 </h3>
                 <div className="space-y-3 text-xs">
-                  {Object.entries(metrics.accuracyPerLevel).map(([level, acc]) => (
-                    <div key={level} className="space-y-1">
-                      <div className="flex justify-between text-neutral-400">
-                        <span className="capitalize">{level}</span>
-                        <span className="font-bold text-white">{acc}%</span>
+                  {Object.entries(metrics.accuracyPerLevel).map(
+                    ([level, acc]) => (
+                      <div key={level} className="space-y-1">
+                        <div className="flex justify-between text-neutral-400">
+                          <span className="capitalize">{level}</span>
+                          <span className="font-bold text-white">{acc}%</span>
+                        </div>
+                        <div className="h-1.5 w-full bg-neutral-800 overflow-hidden">
+                          <div
+                            className="h-full bg-white transition-all duration-300"
+                            style={{ width: `${acc}%` }}
+                          />
+                        </div>
                       </div>
-                      <div className="h-1.5 w-full bg-neutral-800 overflow-hidden">
-                        <div
-                          className="h-full bg-white transition-all duration-300"
-                          style={{ width: `${acc}%` }}
-                        />
-                      </div>
-                    </div>
-                  ))}
+                    ),
+                  )}
                 </div>
               </div>
 
@@ -616,15 +772,21 @@ export default function Home() {
                       key={err.errorType}
                       className="flex justify-between items-center p-2 border border-neutral-800 bg-neutral-950"
                     >
-                      <span className="text-neutral-300 font-semibold">{err.errorType}</span>
+                      <span className="text-neutral-300 font-semibold">
+                        {err.errorType}
+                      </span>
                       <div className="flex gap-3 text-neutral-500">
                         <span>{err.count} occurrences</span>
-                        <span className="text-white font-bold">{err.percentage}%</span>
+                        <span className="text-white font-bold">
+                          {err.percentage}%
+                        </span>
                       </div>
                     </div>
                   ))}
                   {metrics.errorDistribution.length === 0 && (
-                    <p className="text-neutral-600 text-center py-4">No error trends recorded.</p>
+                    <p className="text-neutral-600 text-center py-4">
+                      No error trends recorded.
+                    </p>
                   )}
                 </div>
               </div>

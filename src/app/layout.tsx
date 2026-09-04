@@ -18,6 +18,7 @@ export const metadata: Metadata = {
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
+  console.log("[layout] Rendering root layout");
   return (
     <html
       lang="en"

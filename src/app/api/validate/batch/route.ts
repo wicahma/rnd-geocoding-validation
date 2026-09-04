@@ -13,24 +13,48 @@ export async function POST(request: NextRequest) {
     };
 
     if (!Array.isArray(coordinates) || coordinates.length === 0) {
-      return NextResponse.json({ error: "Invalid coordinates array" }, { status: 400 });
+      return NextResponse.json(
+        { error: "Invalid coordinates array" },
+        { status: 400 },
+      );
     }
 
     if (coordinates.length > 50) {
       return NextResponse.json(
-        { error: "Max 50 coordinates per batch (respects Nominatim rate limits)" },
-        { status: 400 }
+        {
+          error:
+            "Max 50 coordinates per batch (respects Nominatim rate limits)",
+        },
+        { status: 400 },
       );
     }
 
+    console.log(
+      `[api/validate/batch] POST received: ${coordinates.length} coordinate(s)`,
+    );
+
     const records: ValidationRecord[] = [];
 
-    for (const coordinate of coordinates) {
-      if (typeof coordinate.lat !== "number" || typeof coordinate.lon !== "number") {
+    for (let i = 0; i < coordinates.length; i++) {
+      const coordinate = coordinates[i];
+      if (
+        typeof coordinate.lat !== "number" ||
+        typeof coordinate.lon !== "number"
+      ) {
+        console.warn(
+          `[api/validate/batch] Skipping invalid coordinate at index ${i}`,
+        );
         continue;
       }
+      console.log(
+        `[api/validate/batch] Processing coordinate ${i + 1}/${coordinates.length}: ${coordinate.lat},${coordinate.lon}`,
+      );
       const nominatimResult = await reverseGeocode(coordinate);
-      const aiValidation = await validateWithGemini(coordinate, nominatimResult, expected);
+      const aiValidation = await validateWithGemini(
+        coordinate,
+        nominatimResult,
+        expected,
+      );
       const record: ValidationRecord = {
         id: crypto.randomUUID(),
         coordinate,
@@ -44,6 +68,9 @@ export async function POST(request: NextRequest) {
     }
 
     await saveBatchRecords(records);
+    console.log(
+      `[api/validate/batch] Completed: processed ${records.length}/${coordinates.length}`,
+    );
 
     return NextResponse.json({
       processed: records.length,
@@ -52,8 +79,11 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     console.error("Batch validation error:", error);
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Batch validation failed" },
-      { status: 500 }
+      {
+        error:
+          error instanceof Error ? error.message : "Batch validation failed",
+      },
+      { status: 500 },
     );
   }
 }

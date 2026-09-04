@@ -18,11 +18,44 @@ function getGeminiConfig(): GeminiConfig | null {
   const baseUrl = process.env.GEMINI_BASE_URL;
   const model = process.env.GEMINI_MODEL || "gemini-2.0-flash";
 
-  if (!apiKey) return null;
-  return { apiKey, baseUrl: baseUrl || "https://generativelanguage.googleapis.com", model };
+  if (!apiKey) {
+    console.log(
+      "[gemini] No GEMINI_API_KEY configured - will use heuristic fallback",
+    );
+    return null;
+  }
+  console.log(
+    `[gemini] Config loaded: baseUrl=${baseUrl || "https://generativelanguage.googleapis.com"}, model=${model}`,
+  );
+  return {
+    apiKey,
+    baseUrl: baseUrl || "https://generativelanguage.googleapis.com",
+    model,
+  };
 }
 
-function buildPrompt(coord: Coordinate, nominatim: NominatimAddress, expected?: ExpectedAddress): string {
+function getMaxOutputTokens(): number {
+  const raw = Number(process.env.GEMINI_MAX_OUTPUT_TOKENS);
+  return Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : 2048;
+}
+
+// Thinking models spend output tokens on reasoning before writing the answer,
+// which can starve the JSON (the 22-token truncated responses we saw). Default:
+// disable thinking (0). Set GEMINI_THINKING_BUDGET="" to omit the field, or a
+// positive number (e.g. "1024") for a real reasoning budget.
+function getThinkingBudget(): number | null {
+  const raw = process.env.GEMINI_THINKING_BUDGET;
+  if (raw === "") return null; // explicitly opt out of sending the field
+  if (raw === undefined) return 0; // default: disable thinking
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= 0 ? Math.floor(n) : null;
+}
+
+function buildPrompt(
+  coord: Coordinate,
+  nominatim: NominatimAddress,
+  expected?: ExpectedAddress,
+): string {
   const expectedBlock = expected
     ? `EXPECTED/CORRECT ADDRESS:
 - Road: ${expected.road || "N/A"}
@@ -72,31 +105,130 @@ Respond with STRICT JSON only, no markdown, no explanation:
 }`;
 }
 
+function extractModelText(data: unknown): string {
+  const parts =
+    (
+      data as {
+        candidates?: Array<{
+          content?: { parts?: Array<{ text?: string; thought?: boolean }> };
+        }>;
+      }
+    )?.candidates?.[0]?.content?.parts ?? [];
+  // Thinking models can interleave reasoning ("thought") parts; prefer the real answer.
+  const answerParts = parts.filter(
+    (p) => typeof p.text === "string" && !p.thought,
+  );
+  const chosen = answerParts.length > 0 ? answerParts : parts;
+  return chosen
+    .map((p) => p.text ?? "")
+    .join("")
+    .trim();
+}
+
 function parseGeminiResponse(text: string): AIValidationAnalysis | null {
-  try {
-    const cleaned = text.replace(/```json|```/g, "").trim();
-    const start = cleaned.indexOf("{");
-    const end = cleaned.lastIndexOf("}");
-    if (start === -1 || end === -1) return null;
-    return JSON.parse(cleaned.substring(start, end + 1));
-  } catch {
-    return null;
+  const cleaned = text.replace(/```json|```/g, "").trim();
+  const start = cleaned.indexOf("{");
+  if (start === -1) return null;
+
+  // 1) Strict parse of the region between the first '{' and last '}'.
+  const end = cleaned.lastIndexOf("}");
+  if (end > start) {
+    try {
+      return JSON.parse(cleaned.substring(start, end + 1));
+    } catch {
+      // fall through to salvage below
+    }
   }
+
+  // 2) Best-effort salvage of truncated/invalid JSON (e.g. output cut short by
+  //    a maxOutputTokens cap), so we can still surface model data instead of
+  //    silently dropping to the heuristic fallback.
+  return salvageTruncatedJson(cleaned.substring(start));
+}
+
+function salvageTruncatedJson(raw: string): AIValidationAnalysis | null {
+  const scanChars = 400;
+  const lo = Math.max(0, raw.length - scanChars);
+  for (let i = raw.length; i > lo; i--) {
+    const closed = closeOpenStructures(raw.slice(0, i));
+    if (closed == null) continue;
+    try {
+      const parsed = JSON.parse(closed);
+      if (parsed && typeof parsed === "object") {
+        console.warn("[gemini] Salvaged truncated/invalid model JSON");
+        return parsed as AIValidationAnalysis;
+      }
+    } catch {
+      // try a shorter prefix
+    }
+  }
+  return null;
+}
+
+// Appends closers for any unclosed { / [ in a prefix. Returns null when the
+// prefix ends inside an unterminated string (that value is incomplete).
+function closeOpenStructures(s: string): string | null {
+  let inString = false;
+  let escaped = false;
+  const stack: Array<"{" | "["> = [];
+  for (const ch of s) {
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (ch === "\\") escaped = true;
+      else if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') {
+      inString = true;
+    } else if (ch === "{" || ch === "[") {
+      stack.push(ch as "{" | "[");
+    } else if (ch === "}" || ch === "]") {
+      const expected = ch === "}" ? "{" : "[";
+      if (stack[stack.length - 1] === expected) stack.pop();
+      else if (stack.length === 0) return null;
+    }
+  }
+  if (inString) return null;
+  const closers = stack
+    .reverse()
+    .map((c) => (c === "{" ? "}" : "]"))
+    .join("");
+  return s + closers;
 }
 
 export async function validateWithGemini(
   coord: Coordinate,
   nominatim: NominatimAddress,
-  expected?: ExpectedAddress
+  expected?: ExpectedAddress,
 ): Promise<AIValidationAnalysis> {
+  console.log(
+    `[gemini] validateWithGemini called: coord=${coord.lat},${coord.lon}, expected=${expected ? "yes" : "no"}`,
+  );
   const config = getGeminiConfig();
   if (!config) {
     // Fallback heuristic validation when no Gemini API key configured
+    console.log("[gemini] Falling back to heuristicValidation (no config)");
     return heuristicValidation(coord, nominatim, expected);
   }
 
   const prompt = buildPrompt(coord, nominatim, expected);
   const url = `${config.baseUrl}/v1beta/models/${config.model}:generateContent`;
+  console.log(
+    `[gemini] Sending generateContent request to model=${config.model}`,
+  );
+
+  // Keep the payload minimal & schema-free for maximum compatibility with
+  // OpenAI/Vertex-style proxies (LiteLLM): responseSchema + responseMimeType
+  // can be mishandled upstream and cut responses short. We parse and validate
+  // the model's JSON ourselves.
+  const generationConfig: Record<string, unknown> = {
+    temperature: 0.2,
+    maxOutputTokens: getMaxOutputTokens(),
+  };
+  const thinking = getThinkingBudget();
+  if (thinking !== null) {
+    generationConfig.thinkingConfig = { thinkingBudget: thinking };
+  }
 
   const response = await fetch(url, {
     method: "POST",
@@ -105,58 +237,56 @@ export async function validateWithGemini(
       "x-goog-api-key": config.apiKey,
     },
     body: JSON.stringify({
-      contents: [{ parts: [{ text: prompt }] }],
-      generationConfig: {
-        temperature: 0.2,
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: "OBJECT",
-          properties: {
-            isValid: { type: "BOOLEAN" },
-            status: { type: "STRING" },
-            confidenceScore: { type: "NUMBER" },
-            errorTypes: { type: "ARRAY", items: { type: "STRING" } },
-            hierarchyConsistent: { type: "BOOLEAN" },
-            notes: { type: "STRING" },
-            expectedAddress: {
-              type: "OBJECT",
-              properties: {
-                road: { type: "STRING" },
-                village: { type: "STRING" },
-                district: { type: "STRING" },
-                city: { type: "STRING" },
-                province: { type: "STRING" },
-                postcode: { type: "STRING" },
-              },
-            },
-          },
-        },
-      },
+      contents: [{ role: "user", parts: [{ text: prompt }] }],
+      generationConfig,
     }),
   });
 
   if (!response.ok) {
-    throw new Error(`Gemini API error: ${response.status} ${response.statusText}`);
+    console.log("Gemini API error response:", await response.text());
+    throw new Error(
+      `Gemini API error: ${response.status} ${response.statusText}`,
+    );
   }
 
   const data = await response.json();
-  const text = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
+  const usage =
+    (
+      data as {
+        usageMetadata?: {
+          promptTokenCount?: number;
+          candidatesTokenCount?: number;
+        };
+      }
+    )?.usageMetadata ?? {};
+  console.log(`[gemini] MODEL RAW RES BODY: ${JSON.stringify(data, null, 2)}`);
+  console.log(
+    `[gemini] Model RAW response: finishReason=${(data as { candidates?: Array<{ finishReason?: string }> })?.candidates?.[0]?.finishReason ?? "?"}, tokens(in/out)=${usage.promptTokenCount ?? "?"}/${usage.candidatesTokenCount ?? "?"}`,
+  );
+  const text = extractModelText(data);
+  console.log(`[gemini] Extracted model text (${text.length} chars)`);
   const parsed = parseGeminiResponse(text);
 
   if (parsed) {
+    console.log(
+      `[gemini] Parsed AI validation: status=${parsed.status || (parsed.isValid ? "VALID" : "NEED_REVIEW")}, confidence=${parsed.confidenceScore}, errors=${(parsed.errorTypes || []).join(",") || "none"}`,
+    );
     return {
       ...parsed,
       status: parsed.status || (parsed.isValid ? "VALID" : "NEED_REVIEW"),
     };
   }
 
+  console.warn(
+    `[gemini] Could NOT parse model JSON - falling back to heuristicValidation. Model text:\n${text.slice(0, 2000)}`,
+  );
   return heuristicValidation(coord, nominatim, expected);
 }
 
 function heuristicValidation(
   coord: Coordinate,
   nominatim: NominatimAddress,
-  expected?: ExpectedAddress
+  expected?: ExpectedAddress,
 ): AIValidationAnalysis {
   const errors: ErrorType[] = [];
   const inIndonesia =
@@ -183,12 +313,12 @@ function heuristicValidation(
         field === "province"
           ? normalize(nominatim.state)
           : field === "village"
-          ? normalize(nominatim.village)
-          : field === "district"
-          ? normalize(nominatim.district)
-          : field === "city"
-          ? normalize(nominatim.city)
-          : normalize(nominatim.road);
+            ? normalize(nominatim.village)
+            : field === "district"
+              ? normalize(nominatim.district)
+              : field === "city"
+                ? normalize(nominatim.city)
+                : normalize(nominatim.road);
       if (expectedVal && actualVal && expectedVal !== actualVal) {
         errors.push(errorType);
       }
@@ -198,6 +328,10 @@ function heuristicValidation(
   const hasErrors = errors.length > 0;
   const confidenceScore = Math.max(20, 100 - errors.length * 15);
   const status: ValidationStatus = hasErrors ? "NEED_REVIEW" : "VALID";
+
+  console.log(
+    `[gemini] heuristicValidation result: status=${status}, confidence=${confidenceScore}, errors=${[...new Set(errors)].join(",") || "none"}`,
+  );
 
   return {
     isValid: !hasErrors,

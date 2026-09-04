@@ -1,7 +1,10 @@
 import { Coordinate } from "@/types";
 
 // Rough bounding boxes for major Indonesian provinces (lat/lon min/max)
-export const INDONESIA_PROVINCES: { name: string; bounds: [number, number, number, number] }[] = [
+export const INDONESIA_PROVINCES: {
+  name: string;
+  bounds: [number, number, number, number];
+}[] = [
   { name: "Aceh", bounds: [2.0, 95.5, 5.5, 98.0] },
   { name: "Sumatera Utara", bounds: [0.5, 97.5, 3.5, 100.5] },
   { name: "Sumatera Barat", bounds: [-2.5, 98.0, 0.5, 101.5] },
@@ -41,16 +44,22 @@ export const INDONESIA_PROVINCES: { name: string; bounds: [number, number, numbe
   { name: "Papua Selatan", bounds: [-8.5, 134.5, -4.0, 141.0] },
 ];
 
-export function randomCoordinateInBounds(bounds: [number, number, number, number]): Coordinate {
+export function randomCoordinateInBounds(
+  bounds: [number, number, number, number],
+): Coordinate {
   const [latMin, lonMin, latMax, lonMax] = bounds;
   const lat = latMin + Math.random() * (latMax - latMin);
   const lon = lonMin + Math.random() * (lonMax - lonMin);
-  return { lat: round(lat, 6), lon: round(lon, 6) };
+  const point = { lat: round(lat, 6), lon: round(lon, 6) };
+  console.log(
+    `[sampler] randomCoordinateInBounds -> ${point.lat}, ${point.lon}`,
+  );
+  return point;
 }
 
 export function gridSampleInBounds(
   bounds: [number, number, number, number],
-  gridSize: number
+  gridSize: number,
 ): Coordinate[] {
   const [latMin, lonMin, latMax, lonMax] = bounds;
   const coords: Coordinate[] = [];
@@ -65,22 +74,43 @@ export function gridSampleInBounds(
       });
     }
   }
+  console.log(
+    `[sampler] gridSampleInBounds: gridSize=${gridSize} -> ${coords.length} point(s)`,
+  );
   return coords;
 }
 
 export function generateRandomSamples(count: number): Coordinate[] {
   // Random sampling across all Indonesia
+  console.log(`[sampler] generateRandomSamples: requesting ${count} sample(s)`);
   const samples: Coordinate[] = [];
   for (let i = 0; i < count; i++) {
-    const province = INDONESIA_PROVINCES[Math.floor(Math.random() * INDONESIA_PROVINCES.length)];
+    const province =
+      INDONESIA_PROVINCES[
+        Math.floor(Math.random() * INDONESIA_PROVINCES.length)
+      ];
     samples.push(randomCoordinateInBounds(province.bounds));
   }
+  console.log(
+    `[sampler] generateRandomSamples: generated ${samples.length} sample(s)`,
+  );
   return samples;
 }
 
-export function generateGridSamples(provinceName: string, gridSize: number): Coordinate[] {
+export function generateGridSamples(
+  provinceName: string,
+  gridSize: number,
+): Coordinate[] {
   const province = INDONESIA_PROVINCES.find((p) => p.name === provinceName);
-  if (!province) return [];
+  if (!province) {
+    console.warn(
+      `[sampler] generateGridSamples: province "${provinceName}" not found`,
+    );
+    return [];
+  }
+  console.log(
+    `[sampler] generateGridSamples: province=${provinceName}, gridSize=${gridSize}`,
+  );
   return gridSampleInBounds(province.bounds, gridSize);
 }
 

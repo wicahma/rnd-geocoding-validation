@@ -12,12 +12,27 @@ export async function POST(request: NextRequest) {
       expected?: ExpectedAddress;
     };
 
-    if (!coordinate || typeof coordinate.lat !== "number" || typeof coordinate.lon !== "number") {
-      return NextResponse.json({ error: "Invalid coordinate" }, { status: 400 });
+    if (
+      !coordinate ||
+      typeof coordinate.lat !== "number" ||
+      typeof coordinate.lon !== "number"
+    ) {
+      return NextResponse.json(
+        { error: "Invalid coordinate" },
+        { status: 400 },
+      );
     }
 
+    console.log(
+      `[api/validate] POST received: coord=${coordinate.lat},${coordinate.lon}, expected=${expected ? "yes" : "no"}`,
+    );
+
     const nominatimResult = await reverseGeocode(coordinate);
-    const aiValidation = await validateWithGemini(coordinate, nominatimResult, expected);
+    const aiValidation = await validateWithGemini(
+      coordinate,
+      nominatimResult,
+      expected,
+    );
 
     const record: ValidationRecord = {
       id: crypto.randomUUID(),
@@ -29,13 +44,16 @@ export async function POST(request: NextRequest) {
     };
 
     await saveRecord(record);
+    console.log(
+      `[api/validate] Completed: id=${record.id}, status=${record.aiValidation.status}, confidence=${record.aiValidation.confidenceScore}`,
+    );
 
     return NextResponse.json(record);
   } catch (error) {
     console.error("Validation error:", error);
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Validation failed" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }
