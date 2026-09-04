@@ -51,7 +51,7 @@ function getThinkingBudget(): number | null {
   return Number.isFinite(n) && n >= 0 ? Math.floor(n) : null;
 }
 
-function buildPrompt(
+export function buildPrompt(
   coord: Coordinate,
   nominatim: NominatimAddress,
   expected?: ExpectedAddress,
@@ -349,4 +349,93 @@ function heuristicValidation(
 function normalize(val?: string): string {
   if (!val) return "";
   return val.toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+/**
+ * Manual single-shot Gemini call (no Nominatim step, no save). Reuses
+ * validateWithGemini + buildPrompt so the payload/format stays identical to
+ * the pipeline path, but the caller supplies the Nominatim result text.
+ */
+export async function sendToGemini(params: {
+  coord: Coordinate;
+  sourceText?: string;
+  expected?: ExpectedAddress;
+}): Promise<AIValidationAnalysis> {
+  const { coord, sourceText, expected } = params;
+  const config = getGeminiConfig();
+
+  if (!config) {
+    const nominatim = { displayName: sourceText || "" };
+    return heuristicValidation(coord, nominatim, expected);
+  }
+
+  const url = `${config.baseUrl}/v1beta/models/${config.model}:generateContent`;
+  console.log(
+    `[gemini] sendToGemini: model=${config.model}, sourceText=${sourceText ? sourceText.length : 0} chars`,
+  );
+
+  const generationConfig: Record<string, unknown> = {
+    temperature: 0.2,
+    maxOutputTokens: getMaxOutputTokens(),
+  };
+  const thinking = getThinkingBudget();
+  if (thinking !== null) {
+    generationConfig.thinkingConfig = { thinkingBudget: thinking };
+  }
+
+  const response = await fetch(url, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-goog-api-key": config.apiKey,
+    },
+    body: JSON.stringify({
+      contents: [{ role: "user", parts: [{ text: sourceText }] }],
+      generationConfig,
+    }),
+  });
+
+  if (!response.ok) {
+    console.log("Gemini API error response:", await response.text());
+    throw new Error(
+      `Gemini API error: ${response.status} ${response.statusText}`,
+    );
+  }
+
+  const data = await response.json();
+  const usage =
+    (
+      data as {
+        usageMetadata?: {
+          promptTokenCount?: number;
+          candidatesTokenCount?: number;
+        };
+      }
+    )?.usageMetadata ?? {};
+  console.log(
+    `[gemini] sendToGemini raw: finishReason=${(data as { candidates?: Array<{ finishReason?: string }> })?.candidates?.[0]?.finishReason ?? "?"}, tokens(in/out)=${usage.promptTokenCount ?? "?"}/${usage.candidatesTokenCount ?? "?"}`,
+  );
+  const text = extractModelText(data);
+  console.log(`[gemini] sendToGemini extracted text (${text.length} chars)`);
+  const parsed = parseGeminiResponse(text);
+
+  if (parsed) {
+    return {
+      ...parsed,
+      status: parsed.status || (parsed.isValid ? "VALID" : "NEED_REVIEW"),
+    };
+  }
+
+  console.warn(
+    `[gemini] sendToGemini could NOT parse model JSON. Model text:\n${text.slice(0, 2000)}`,
+  );
+  return {
+    isValid: false,
+    status: "NEED_REVIEW",
+    confidenceScore: 0,
+    errorTypes: ["MISSING_DATA"],
+    hierarchyConsistent: false,
+    notes: "Model response could not be parsed",
+    expectedAddress: expected || {},
+  };
 }
