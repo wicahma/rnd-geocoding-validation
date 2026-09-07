@@ -1,11 +1,13 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { Coordinate, ExpectedAddress } from "@/types";
 import { DIY_KABUPATEN, KECAMATAN_DIY } from "@/lib/kecamatan";
+import { INDONESIA_PROVINCES } from "@/lib/sampler";
+import { useSearchParams } from "next/navigation";
 
-type Method = "e2e" | "gemini" | "nominatim";
+export type Method = "e2e" | "gemini" | "nominatim";
 
 const EXPECTED_DEFAULT: ExpectedAddress = {
   road: "",
@@ -40,7 +42,12 @@ interface NominatimResult {
 }
 
 export default function Home() {
+  const query = useSearchParams();
+  const mode = query.get("mode");
   const [method, setMethod] = useState<Method>("e2e");
+  const [selectedProvince, setSelectedProvince] = useState(
+    "Daerah Istimewa Yogyakarta",
+  );
   const [lat, setLat] = useState("-7.8495154");
   const [lon, setLon] = useState("110.3593989");
   const [kabupaten, setKabupaten] = useState("Bantul");
@@ -56,6 +63,34 @@ export default function Home() {
 
   const kecamatans = KECAMATAN_DIY[kabupaten] ?? [];
 
+  const handleProvinceChange = (provName: string) => {
+    setSelectedProvince(provName);
+    setExpected((prev) => ({
+      ...prev,
+      province: provName,
+    }));
+    // If not DIY, fallback coordinate or center bounds from INDONESIA_PROVINCES
+    if (provName !== "Daerah Istimewa Yogyakarta") {
+      const p = INDONESIA_PROVINCES.find((x) => x.name === provName);
+      if (p) {
+        const midLat = ((p.bounds[0] + p.bounds[2]) / 2).toFixed(6);
+        const midLon = ((p.bounds[1] + p.bounds[3]) / 2).toFixed(6);
+        setLat(midLat);
+        setLon(midLon);
+        setKabupaten("");
+        setKecamatanName("");
+        setExpected((prev) => ({
+          ...prev,
+          city: "",
+          district: "",
+          province: provName,
+        }));
+      }
+    } else {
+      setKab("Bantul");
+    }
+  };
+
   const applyKecamatan = (name: string) => {
     const k = kecamatans.find((x) => x.name === name);
     if (k) {
@@ -65,23 +100,35 @@ export default function Home() {
         ...prev,
         district: k.name,
         city: kabupaten,
-        province: EXPECTED_DEFAULT.province,
+        province: selectedProvince,
       }));
     }
   };
 
+  useEffect(() => {
+    console.log("MODE: ", mode);
+    if (mode === "gemini") {
+      setMethod("gemini");
+    }
+    if (mode === "nominatim") {
+      setMethod("nominatim");
+    }
+  }, [mode]);
+
   const setKab = (kab: string) => {
     setKabupaten(kab);
-    const first = KECAMATAN_DIY[kab][0];
-    setKecamatanName(first.name);
-    setLat(first.lat.toFixed(6));
-    setLon(first.lon.toFixed(6));
-    setExpected((prev) => ({
-      ...prev,
-      district: first.name,
-      city: kab,
-      province: EXPECTED_DEFAULT.province,
-    }));
+    const first = KECAMATAN_DIY[kab]?.[0];
+    if (first) {
+      setKecamatanName(first.name);
+      setLat(first.lat.toFixed(6));
+      setLon(first.lon.toFixed(6));
+      setExpected((prev) => ({
+        ...prev,
+        district: first.name,
+        city: kab,
+        province: selectedProvince,
+      }));
+    }
   };
 
   const selectKecamatan = (name: string) => {
@@ -240,17 +287,36 @@ export default function Home() {
         {(method === "gemini" || method === "nominatim") && (
           <div className="border border-neutral-800 bg-neutral-900/50 p-6 space-y-4">
             <h2 className="text-sm font-bold uppercase tracking-wider text-neutral-300">
-              Auto-Input Target (DI Yogyakarta)
+              Auto-Input Target
             </h2>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
                 <label className="block text-xs text-neutral-400 mb-1">
-                  Kabupaten / Kota
+                  Provinsi
+                </label>
+                <select
+                  value={selectedProvince}
+                  onChange={(e) => handleProvinceChange(e.target.value)}
+                  className="w-full bg-neutral-950 border border-neutral-800 p-2 text-xs text-white"
+                >
+                  {INDONESIA_PROVINCES.map((p) => (
+                    <option key={p.name} value={p.name}>
+                      {p.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs text-neutral-400 mb-1">
+                  Kabupaten / Kota{" "}
+                  {selectedProvince !== "Daerah Istimewa Yogyakarta" &&
+                    "(DIY only presets)"}
                 </label>
                 <select
                   value={kabupaten}
+                  disabled={selectedProvince !== "Daerah Istimewa Yogyakarta"}
                   onChange={(e) => setKab(e.target.value)}
-                  className="w-full bg-neutral-950 border border-neutral-800 p-2 text-xs text-white"
+                  className="w-full bg-neutral-950 border border-neutral-800 p-2 text-xs text-white disabled:opacity-50"
                 >
                   {DIY_KABUPATEN.map((k) => (
                     <option key={k} value={k}>
@@ -265,8 +331,9 @@ export default function Home() {
                 </label>
                 <select
                   value={kecamatanName}
+                  disabled={selectedProvince !== "Daerah Istimewa Yogyakarta"}
                   onChange={(e) => selectKecamatan(e.target.value)}
-                  className="w-full bg-neutral-950 border border-neutral-800 p-2 text-xs text-white"
+                  className="w-full bg-neutral-950 border border-neutral-800 p-2 text-xs text-white disabled:opacity-50"
                 >
                   {kecamatans.map((k) => (
                     <option key={k.name} value={k.name}>

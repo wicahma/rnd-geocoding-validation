@@ -8,21 +8,62 @@ import {
   ValidationRecord,
 } from "@/types";
 import { INDONESIA_PROVINCES } from "@/lib/sampler";
+import { DIY_KABUPATEN, KECAMATAN_DIY } from "@/lib/kecamatan";
+import { useRouter } from "next/navigation";
+import Link from "next/link";
+import { Method } from "../page";
 
 export default function Home() {
+  const router = useRouter();
   const [activeTab, setActiveTab] = useState<"test" | "logs" | "metrics">(
     "test",
   );
-  const [lat, setLat] = useState("-6.2146");
-  const [lon, setLon] = useState("106.8485");
+  const [kabupaten, setKabupaten] = useState("Bantul");
+  const [kecamatanName, setKecamatanName] = useState("Sewon");
+  const [lat, setLat] = useState("-7.8495154");
+  const [lon, setLon] = useState("110.3593989");
   const [expected, setExpected] = useState<ExpectedAddress>({
     road: "",
     village: "",
-    district: "",
-    city: "",
-    province: "",
+    district: "Sewon",
+    city: "Bantul",
+    province: "Daerah Istimewa Yogyakarta",
     postcode: "",
   });
+
+  const kecamatans = KECAMATAN_DIY[kabupaten] ?? [];
+
+  const handleKabupatenChange = (kab: string) => {
+    setKabupaten(kab);
+    const list = KECAMATAN_DIY[kab] ?? [];
+    if (list.length > 0) {
+      const first = list[0];
+      setKecamatanName(first.name);
+      setLat(first.lat.toFixed(6));
+      setLon(first.lon.toFixed(6));
+      setExpected((prev) => ({
+        ...prev,
+        district: first.name,
+        city: kab,
+        province: "Daerah Istimewa Yogyakarta",
+      }));
+    }
+  };
+
+  const handleKecamatanChange = (name: string) => {
+    setKecamatanName(name);
+    const item = kecamatans.find((k) => k.name === name);
+    if (item) {
+      setLat(item.lat.toFixed(6));
+      setLon(item.lon.toFixed(6));
+      setExpected((prev) => ({
+        ...prev,
+        district: item.name,
+        city: kabupaten,
+        province: "Daerah Istimewa Yogyakarta",
+      }));
+    }
+  };
 
   const [loading, setLoading] = useState(false);
   const [latestRecord, setLatestRecord] = useState<ValidationRecord | null>(
@@ -273,6 +314,45 @@ export default function Home() {
           </div>
         )}
 
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          {(
+            [
+              {
+                id: "e2e",
+                title: "Default — End to End",
+                desc: "Nominatim → Gemini → simpan ke correction log",
+                href: "/pipeline",
+              },
+              {
+                id: "gemini",
+                title: "Manual — Gemini Validation",
+                desc: "Kirim koordinat / teks ke Gemini saja",
+                href: "/?mode=gemini",
+              },
+              {
+                id: "nominatim",
+                title: "Manual — Nominatim Check",
+                desc: "Reverse geocode koordinat via Nominatim saja",
+                href: "/?mode=nominatim",
+              },
+            ] as { id: Method; title: string; desc: string; href: string }[]
+          ).map((m) => (
+            <Link
+              key={m.id}
+              href={m.href}
+              className="block border border-neutral-800 bg-neutral-900/50 p-6 hover:border-white hover:bg-neutral-800/50 transition"
+            >
+              <h2 className="text-sm font-bold uppercase tracking-wider text-white">
+                {m.title}
+              </h2>
+              <p className="text-xs text-neutral-400 mt-2">{m.desc}</p>
+              <p className="text-xs text-white mt-4 uppercase">
+                Buka Pipeline →
+              </p>
+            </Link>
+          ))}
+        </div>
+
         {activeTab === "test" && (
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
             <div className="lg:col-span-1 space-y-6">
@@ -281,6 +361,40 @@ export default function Home() {
                   Single Coordinate Test
                 </h2>
                 <form onSubmit={handleSingleTest} className="space-y-4">
+                  <div className="space-y-2">
+                    <label className="block text-xs text-neutral-400">
+                      Kabupaten / Kota (DIY)
+                    </label>
+                    <select
+                      value={kabupaten}
+                      onChange={(e) => handleKabupatenChange(e.target.value)}
+                      className="w-full bg-neutral-950 border border-neutral-800 p-2 text-xs text-white"
+                    >
+                      {DIY_KABUPATEN.map((k) => (
+                        <option key={k} value={k}>
+                          {k}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="space-y-2">
+                    <label className="block text-xs text-neutral-400">
+                      Kecamatan
+                    </label>
+                    <select
+                      value={kecamatanName}
+                      onChange={(e) => handleKecamatanChange(e.target.value)}
+                      className="w-full bg-neutral-950 border border-neutral-800 p-2 text-xs text-white"
+                    >
+                      {kecamatans.map((k) => (
+                        <option key={k.name} value={k.name}>
+                          {k.name} ({k.lat.toFixed(4)}, {k.lon.toFixed(4)})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
                   <div className="grid grid-cols-2 gap-2">
                     <div>
                       <label className="block text-xs text-neutral-400 mb-1">
