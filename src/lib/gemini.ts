@@ -348,7 +348,15 @@ function heuristicValidation(
 
 function normalize(val?: string): string {
   if (!val) return "";
-  return val.toLowerCase().replace(/\s+/g, " ").trim();
+  return val
+    .toLowerCase()
+    .replace(
+      /\b(daerah|khusus|ibukota|ibu kota|provinsi|prov|administrasi|di)\b/gi,
+      "",
+    )
+    .replace(/^(kabupaten|kab|kota|kecamatan|kec|desa|kelurahan|kel)\s+/gi, "")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 /**

@@ -51,6 +51,19 @@ export interface AIValidationAnalysis {
   hierarchyConsistent: boolean;
   notes: string;
   expectedAddress: ExpectedAddress;
+  /**
+   * The enhanced pipeline result that AI was asked to cross-match against.
+   * Filled by the engine (decision.ts), not returned by the model itself.
+   */
+  enhancedAddress?: ExpectedAddress & {
+    source: string;
+    datasetVersion?: string;
+    boundaryIdentifiers?: AdminHierarchyCodes;
+  };
+  /**
+   * Field-by-field AI-vs-enhanced cross-match (computed by the engine).
+   */
+  crossMatch?: CrossMatchResult;
 }
 
 export interface ValidationRecord {
@@ -79,26 +92,37 @@ export interface QualityMetrics {
     province: number;
   };
   topErrors: { errorType: ErrorType; count: number }[];
-  errorDistribution: { errorType: ErrorType; count: number; percentage: number }[];
+  errorDistribution: {
+    errorType: ErrorType;
+    count: number;
+    percentage: number;
+  }[];
 }
 
 // ----------------------------------------------------
 // V2 Enhanced Pipeline Types
 // ----------------------------------------------------
 
+export type AdminHierarchySource =
+  | "shapefile_wilayah_boundaries_v2026.1"
+  | "indonesia_bps_bounds_v1"
+  | "manual_shapefile_overlay";
+
+export interface AdminHierarchyCodes {
+  provinceCode?: string;
+  cityCode?: string;
+  districtCode?: string;
+  villageCode?: string;
+}
+
 export interface GISAdminHierarchy {
   province?: string;
   city?: string;
   district?: string;
   village?: string;
-  source: string;
+  source: AdminHierarchySource;
   datasetVersion: string;
-  boundaryIdentifiers?: {
-    provinceCode?: string;
-    cityCode?: string;
-    districtCode?: string;
-    villageCode?: string;
-  };
+  boundaryIdentifiers?: AdminHierarchyCodes;
 }
 
 export interface GISLevelComparison {
@@ -113,13 +137,65 @@ export interface GISLevelComparison {
 export interface GISValidationResult {
   available: boolean;
   reason?: string;
-  source?: string;
+  source?: AdminHierarchySource;
   datasetVersion?: string;
   hierarchy?: GISAdminHierarchy;
   comparisons: GISLevelComparison[];
   matchedLevelsCount: number;
   allMatched: boolean;
 }
+
+/**
+ * The final decision = cross-match between the AI judgment and the
+ * Nominatim address enhanced by deterministic GIS (polygon) + road layers.
+ * Each admin level is compared field-by-field.
+ */
+export type CrossMatchLevel =
+  | "province"
+  | "city"
+  | "district"
+  | "village"
+  | "road";
+
+export interface CrossMatchComparison {
+  level: CrossMatchLevel;
+  /** Value claimed by AI / expected-address (the "AI side") */
+  aiValue?: string;
+  /** Ground truth value from enhanced pipeline (GIS shapefile / road / Nominatim) */
+  enhancedValue?: string;
+  /** Whether AI determination agrees with enhanced ground truth for this level */
+  match: boolean;
+  /**
+   * Where the disagreement sits:
+   * "enhanced-gis" | "enhanced-road" | "nominatim-missing" | "ai-only" |
+   * "none" (agreed)
+   */
+  conflictWith:
+    | "enhanced-gis"
+    | "enhanced-road"
+    | "nominatim-missing"
+    | "ai-only"
+    | "none";
+}
+
+export interface CrossMatchResult {
+  /** Total admin levels compared (province, city, district, village, road) */
+  comparedLevels: number;
+  /** Number of levels where AI matches enhanced ground truth */
+  matchedLevels: number;
+  allMatched: boolean;
+  comparisons: CrossMatchComparison[];
+}
+
+// ----------------------------------------------------
+// V2 Enhanced Pipeline Types
+// ----------------------------------------------------
+
+export type ValidationDeterminedBy =
+  | "cross_match_ai_vs_enhanced"
+  | "deterministic_gis_road"
+  | "ai_arbitration"
+  | "fallback";
 
 export type RoadType =
   | "highway"
@@ -158,9 +234,17 @@ export interface ValidationEvidence {
     invoked: boolean;
     analysis?: AIValidationAnalysis;
   };
+  /** Enhanced address = Nominatim corrected with deterministic GIS + road */
+  enhancedAddress?: ExpectedAddress & {
+    source: string;
+    datasetVersion?: string;
+    boundaryIdentifiers?: AdminHierarchyCodes;
+  };
+  /** Cross-match of AI vs enhanced Nominatim */
+  crossMatch?: CrossMatchResult;
   finalDecision: {
     status: ValidationStatus;
-    determinedBy: "deterministic_gis_road" | "ai_arbitration" | "fallback";
+    determinedBy: ValidationDeterminedBy;
     confidenceScore: number;
     errorTypes: ErrorType[];
     reason: string;

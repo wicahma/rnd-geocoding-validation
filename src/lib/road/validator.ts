@@ -10,6 +10,13 @@ export interface RoadThresholdConfig {
   generic: number;
 }
 
+export interface ExpectedRoadHint {
+  /** Street name as written by the user */
+  name?: string;
+  /** If available: centroid of the street / nearest landmark */
+  centroid?: Coordinate;
+}
+
 export const DEFAULT_ROAD_THRESHOLDS: RoadThresholdConfig = {
   highway: 100, // meters tolerance for wide dual-carriageway/toll roads
   primary: 50,
@@ -24,7 +31,10 @@ export const DEFAULT_ROAD_THRESHOLDS: RoadThresholdConfig = {
  * Normalizes Indonesian street names for audit and comparison.
  * e.g. "Jl. Jendral Sudirman No. 12" -> "sudirman"
  */
-export function normalizeRoadName(raw?: string): { original: string; normalized: string } {
+export function normalizeRoadName(raw?: string): {
+  original: string;
+  normalized: string;
+} {
   if (!raw) return { original: "", normalized: "" };
 
   const original = raw.trim();
@@ -76,7 +86,10 @@ export function calculateStringSimilarity(s1: string, s2: string): number {
 /**
  * Great-circle distance using Haversine formula (in meters)
  */
-export function haversineDistanceMeters(c1: Coordinate, c2: Coordinate): number {
+export function haversineDistanceMeters(
+  c1: Coordinate,
+  c2: Coordinate,
+): number {
   const R = 6371000; // Earth radius in meters
   const dLat = ((c2.lat - c1.lat) * Math.PI) / 180;
   const dLon = ((c2.lon - c1.lon) * Math.PI) / 180;
@@ -98,7 +111,9 @@ export function validateRoadLevel(
   nominatimRoad?: string,
   expectedRoad?: string,
   roadType: RoadType = "residential",
-  thresholds: RoadThresholdConfig = DEFAULT_ROAD_THRESHOLDS
+  thresholds: RoadThresholdConfig = DEFAULT_ROAD_THRESHOLDS,
+  /** Optional expected road geometry/centroid -> enables real distance check */
+  expectedHint?: ExpectedRoadHint,
 ): RoadValidationResult {
   if (!nominatimRoad && !expectedRoad) {
     return {
@@ -116,7 +131,18 @@ export function validateRoadLevel(
   const normExp = normalizeRoadName(expectedRoad);
 
   const threshold = thresholds[roadType] || thresholds.generic;
-  const nameSimilarity = calculateStringSimilarity(normNom.normalized, normExp.normalized);
+  const nameSimilarity = calculateStringSimilarity(
+    normNom.normalized,
+    normExp.normalized,
+  );
+
+  // Distance check when expected road has a known centroid (geometry hint):
+  // validates whether the coordinate is spatially on the claimed street.
+  const distanceMeter = expectedHint?.centroid
+    ? haversineDistanceMeters(coord, expectedHint.centroid)
+    : 0;
+  const distanceExceeded =
+    distanceMeter > 0 && threshold > 0 && distanceMeter > threshold;
 
   // When Nominatim road is missing but expected exists:
   if (!nominatimRoad && expectedRoad) {
@@ -124,7 +150,7 @@ export function validateRoadLevel(
       available: true,
       nominatimRoad: "",
       matchedRoad: expectedRoad,
-      distanceMeter: 0,
+      distanceMeter,
       thresholdMeter: threshold,
       nameSimilarity: 0,
       roadType,
@@ -136,16 +162,21 @@ export function validateRoadLevel(
   // When expected road is provided, compare similarity
   if (expectedRoad) {
     const isNameMatch = nameSimilarity >= 0.75;
+    const match = isNameMatch && !distanceExceeded;
     return {
       available: true,
       nominatimRoad,
       matchedRoad: expectedRoad,
-      distanceMeter: 0, // In offline/direct check, distance is 0 unless road geometry geometry coordinates are supplied
+      distanceMeter,
       thresholdMeter: threshold,
       nameSimilarity: Math.round(nameSimilarity * 100) / 100,
       roadType,
-      match: isNameMatch,
-      errorType: isNameMatch ? undefined : "ROAD_NAME_MISMATCH",
+      match,
+      errorType: !match
+        ? distanceExceeded
+          ? "ROAD_DISTANCE_EXCEEDED"
+          : "ROAD_NAME_MISMATCH"
+        : undefined,
     };
   }
 

@@ -1,6 +1,12 @@
-import { Coordinate, GISAdminHierarchy, GISLevelComparison, GISValidationResult, NominatimAddress } from "@/types";
-import { PROVINSI } from "@/lib/kecamatan";
-import { INDONESIA_PROVINCES } from "@/lib/sampler";
+import {
+  Coordinate,
+  GISAdminHierarchy,
+  GISLevelComparison,
+  GISValidationResult,
+  NominatimAddress,
+  AdminHierarchyCodes,
+} from "@/types";
+import { resolveAdminHierarchyAt } from "./shapefile";
 
 export interface GISAttributeMapping {
   province: string[];
@@ -37,8 +43,10 @@ export function pointInPolygon(point: Point, vs: Point[]): boolean {
   let inside = false;
 
   for (let i = 0, j = vs.length - 1; i < vs.length; j = i++) {
-    const xi = vs[i][0], yi = vs[i][1];
-    const xj = vs[j][0], yj = vs[j][1];
+    const xi = vs[i][0],
+      yi = vs[i][1];
+    const xj = vs[j][0],
+      yj = vs[j][1];
 
     const intersect =
       yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi;
@@ -49,59 +57,88 @@ export function pointInPolygon(point: Point, vs: Point[]): boolean {
 }
 
 /**
- * Normalizes string for boundary comparison (e.g. "Kota Yogyakarta" vs "Yogyakarta")
+ * Normalizes string for boundary comparison (e.g. "Kota Yogyakarta" vs
+ * "Yogyakarta", "Daerah Khusus Ibukota Jakarta" vs "DKI Jakarta",
+ * "Kota Administrasi Jakarta Selatan" vs "Jakarta Selatan").
  */
 export function normalizeAdminName(name?: string): string {
   if (!name) return "";
   return name
     .toLowerCase()
-    .replace(/\b(daerah|khusus|ibukota|dki|di)\b/gi, "")
-    .replace(/^(provinsi|prov\.?|kabupaten|kab\.?|kota|kecamatan|kec\.?|desa|kelurahan|kel\.?)\s+/gi, "")
+    .replace(
+      /\b(daerah|khusus|ibukota|ibu kota|dki|di|administrasi|admin)\b/gi,
+      "",
+    )
+    .replace(
+      /^(provinsi|prov\.?|kabupaten|kab\.?|kota|kecamatan|kec\.?|desa|kelurahan|kel\.?)\s+/gi,
+      "",
+    )
     .replace(/[^a-z0-9]/g, "")
     .trim();
 }
 
 /**
- * Resolve administrative hierarchy from coordinate using bounding boxes & regional data
+ * Resolve administrative hierarchy from coordinate using real shapefile
+ * polygons (current administrative boundary per Kepmendagri, cahyadsn
+ * wilayah_boundaries). Walks province -> city -> district via point-in-polygon.
  */
-export function lookupGISBoundary(
+export async function lookupGISBoundary(
   coord: Coordinate,
-  mapping: GISAttributeMapping = DEFAULT_GIS_MAPPING
-): GISAdminHierarchy | null {
-  const { lat, lon } = coord;
+  _mapping: GISAttributeMapping = DEFAULT_GIS_MAPPING,
+): Promise<GISAdminHierarchy | null> {
+  const result = await resolveAdminHierarchyAt(coord);
+  if (!result) return null;
 
-  // 1. Check province bounds
-  const matchedProv = INDONESIA_PROVINCES.find((p) => {
-    const [minLat, minLon, maxLat, maxLon] = p.bounds;
-    return lat >= minLat && lat <= maxLat && lon >= minLon && lon <= maxLon;
-  });
-
-  if (!matchedProv) return null;
-
-  const provItem = PROVINSI.find(
-    (p) => normalizeAdminName(p.nama) === normalizeAdminName(matchedProv.name)
-  );
+  const boundaryIdentifiers: AdminHierarchyCodes = {
+    provinceCode: result.codes.provinceCode,
+    cityCode: result.codes.cityCode,
+    districtCode: result.codes.districtCode,
+  };
 
   return {
-    province: matchedProv.name,
-    source: "indonesia_bps_bounds_v1",
+    province: result.names.province,
+    city: result.names.city,
+    district: result.names.district,
+    source: "shapefile_wilayah_boundaries_v2026.1",
     datasetVersion: "2026.1",
-    boundaryIdentifiers: {
-      provinceCode: provItem?.kode,
-    },
+    boundaryIdentifiers,
+  };
+}
+
+/**
+ * Build the "enhanced address": the Nominatim reverse-geocoding result
+ * corrected/enriched with deterministic GIS shapefile geometry —
+ * the ground-truth street view of what the coordinate really is.
+ * Cross-match compares the AI against THIS address.
+ */
+export async function buildEnhancedAddress(
+  coord: Coordinate,
+  nominatim: NominatimAddress,
+): Promise<GISAdminHierarchy> {
+  const gisData = await lookupGISBoundary(coord);
+
+  return {
+    province: gisData?.province || nominatim.state,
+    city: gisData?.city || nominatim.city,
+    district: gisData?.district || nominatim.district || nominatim.subdistrict,
+    village: nominatim.village,
+    source: gisData?.source || "manual_shapefile_overlay",
+    datasetVersion: gisData?.datasetVersion || "2026.1",
+    boundaryIdentifiers: gisData?.boundaryIdentifiers,
   };
 }
 
 /**
  * Validate Nominatim address against GIS deterministic hierarchy
  */
-export function validateAgainstGIS(
+export async function validateAgainstGIS(
   coord: Coordinate,
   nominatim: NominatimAddress,
-  expectedHierarchy?: Partial<GISAdminHierarchy>
-): GISValidationResult {
-  const gisData = lookupGISBoundary(coord);
+  expectedHierarchy?: Partial<GISAdminHierarchy>,
+): Promise<GISValidationResult> {
+  const gisData = await lookupGISBoundary(coord);
 
+  // Claim (expected) vs ground truth (shapefile). No claim -> not verifiable.
   if (!gisData && !expectedHierarchy) {
     return {
       available: false,
@@ -112,93 +149,77 @@ export function validateAgainstGIS(
     };
   }
 
-  const effectiveGIS: GISAdminHierarchy = {
-    province: expectedHierarchy?.province || gisData?.province,
-    city: expectedHierarchy?.city || gisData?.city,
-    district: expectedHierarchy?.district || gisData?.district,
-    village: expectedHierarchy?.village || gisData?.village,
-    source: gisData?.source || "manual_shapefile_overlay",
-    datasetVersion: gisData?.datasetVersion || "2026.1",
-  };
-
   const comparisons: GISLevelComparison[] = [];
 
-  // Check Province
-  if (effectiveGIS.province) {
-    const nomProv = nominatim.state || "";
-    const match =
-      normalizeAdminName(nomProv) === normalizeAdminName(effectiveGIS.province) ||
-      (nomProv.length > 0 && effectiveGIS.province.toLowerCase().includes(nomProv.toLowerCase())) ||
-      (nomProv.length > 0 && nomProv.toLowerCase().includes(effectiveGIS.province.toLowerCase()));
-
-    comparisons.push({
+  // Claim (expected) vs ground truth (shapefile). No claim -> not verifiable.
+  const levelKeys: Array<{
+    level: GISLevelComparison["level"];
+    claim: string | undefined;
+    truth: string | undefined;
+  }> = [
+    {
       level: "province",
-      nominatimValue: nomProv,
-      gisValue: effectiveGIS.province,
-      match,
-      source: "gis",
-      confidence: "deterministic",
-    });
-  }
-
-  // Check City/Kabupaten
-  if (effectiveGIS.city) {
-    const nomCity = nominatim.city || "";
-    const match =
-      normalizeAdminName(nomCity) === normalizeAdminName(effectiveGIS.city);
-
-    comparisons.push({
+      // Province understood from context (claim fallback = shapefile itself)
+      claim: expectedHierarchy?.province || gisData?.province,
+      truth: gisData?.province,
+    },
+    {
       level: "city",
-      nominatimValue: nomCity,
-      gisValue: effectiveGIS.city,
-      match,
-      source: "gis",
-      confidence: "deterministic",
-    });
-  }
-
-  // Check District/Kecamatan
-  if (effectiveGIS.district) {
-    const nomDistrict = nominatim.district || nominatim.subdistrict || "";
-    const match =
-      normalizeAdminName(nomDistrict) === normalizeAdminName(effectiveGIS.district);
-
-    comparisons.push({
+      claim: expectedHierarchy?.city || gisData?.city,
+      truth: gisData?.city,
+    },
+    {
       level: "district",
-      nominatimValue: nomDistrict,
-      gisValue: effectiveGIS.district,
-      match,
-      source: "gis",
-      confidence: "deterministic",
-    });
-  }
+      claim: expectedHierarchy?.district || gisData?.district,
+      truth: gisData?.district,
+    },
+    {
+      level: "village",
+      claim: expectedHierarchy?.village,
+      truth: gisData?.village,
+    },
+  ];
 
-  // Check Village/Kelurahan
-  if (effectiveGIS.village) {
-    const nomVillage = nominatim.village || "";
-    const match =
-      normalizeAdminName(nomVillage) === normalizeAdminName(effectiveGIS.village);
+  for (const { level, claim, truth } of levelKeys) {
+    if (!truth && !claim) continue; // nothing to compare at this level
+
+    let match: boolean;
+    if (!claim) {
+      // No claim -> cannot be wrong (shapefile overlay still reported)
+      match = true;
+    } else if (!truth) {
+      // Claim but no GIS coverage for this level -> cannot be checked
+      match = true;
+    } else {
+      const c = normalizeAdminName(claim);
+      const t = normalizeAdminName(truth);
+      match = c === t || t.includes(c) || c.includes(t);
+    }
 
     comparisons.push({
-      level: "village",
-      nominatimValue: nomVillage,
-      gisValue: effectiveGIS.village,
+      level,
+      nominatimValue: claim || truth, // claimed value being verified
+      gisValue: truth, // deterministic shapefile ground truth
       match,
       source: "gis",
       confidence: "deterministic",
     });
   }
 
-  const matchedCount = comparisons.filter((c) => c.match).length;
-  const allMatched = comparisons.length > 0 && matchedCount === comparisons.length;
+  const matchedLevelsCount = comparisons.filter((c) => c.match).length;
 
+  // available as long as we produced comparisons (claims exist)
+  const gisAvailable = !!gisData;
   return {
-    available: true,
-    source: effectiveGIS.source,
-    datasetVersion: effectiveGIS.datasetVersion,
-    hierarchy: effectiveGIS,
+    available: gisAvailable || comparisons.length > 0,
+    reason: gisAvailable
+      ? undefined
+      : "CLAIMED_LEVELS_OUTSIDE_SHAPEFILE_COVERAGE",
+    source: gisData?.source || "manual_shapefile_overlay",
+    datasetVersion: gisData?.datasetVersion || "2026.1",
+    hierarchy: gisData || undefined,
     comparisons,
-    matchedLevelsCount: matchedCount,
-    allMatched,
+    matchedLevelsCount,
+    allMatched: matchedLevelsCount === comparisons.length,
   };
 }

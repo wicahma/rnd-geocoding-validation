@@ -250,6 +250,12 @@ function HomeContent() {
                 href: "/pipeline-v2",
               },
               {
+                id: "map",
+                title: "Map — Shapefile Polygon (OSM)",
+                desc: "Visualisasi polygon provinsi/kabupaten/kecamatan + point-in-polygon",
+                href: "/peta-wilayah",
+              },
+              {
                 id: "gemini",
                 title: "Manual — Gemini Validation",
                 desc: "Kirim koordinat / teks ke Gemini saja",

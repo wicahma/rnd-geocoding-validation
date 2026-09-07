@@ -35,10 +35,14 @@ export default function PipelineV2Page() {
   // States
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
-  const [latestRecord, setLatestRecord] = useState<ValidationRecord | null>(null);
+  const [latestRecord, setLatestRecord] = useState<ValidationRecord | null>(
+    null,
+  );
   const [records, setRecords] = useState<ValidationRecord[]>([]);
   const [aggregates, setAggregates] = useState<ProvinceQualityAggregates[]>([]);
-  const [selectedRecap, setSelectedRecap] = useState<ProvinceAIRecap | null>(null);
+  const [selectedRecap, setSelectedRecap] = useState<ProvinceAIRecap | null>(
+    null,
+  );
   const [recapLoading, setRecapLoading] = useState(false);
 
   useEffect(() => {
@@ -127,7 +131,8 @@ export default function PipelineV2Page() {
                 </h1>
               </div>
               <p className="text-xs text-neutral-400 mt-1">
-                Point-in-Polygon GIS Ground Truth → Road Verification → AI Semantic Arbitration
+                Point-in-Polygon GIS Ground Truth → Road Verification → AI
+                Semantic Arbitration
               </p>
             </div>
 
@@ -144,6 +149,12 @@ export default function PipelineV2Page() {
                 className="px-3 py-1.5 text-xs border border-neutral-800 hover:border-neutral-600 text-neutral-400"
               >
                 V1 Batch Pipeline
+              </Link>
+              <Link
+                href="/peta-wilayah"
+                className="px-3 py-1.5 text-xs border border-neutral-800 hover:border-neutral-600 text-neutral-400"
+              >
+                Map
               </Link>
               <button
                 onClick={() => setActiveTab("test")}
@@ -202,7 +213,9 @@ export default function PipelineV2Page() {
                 <form onSubmit={handleValidate} className="space-y-4">
                   <div className="grid grid-cols-2 gap-2">
                     <div>
-                      <label className="block text-[11px] text-neutral-400 mb-1">Latitude</label>
+                      <label className="block text-[11px] text-neutral-400 mb-1">
+                        Latitude
+                      </label>
                       <input
                         type="text"
                         value={lat}
@@ -212,7 +225,9 @@ export default function PipelineV2Page() {
                       />
                     </div>
                     <div>
-                      <label className="block text-[11px] text-neutral-400 mb-1">Longitude</label>
+                      <label className="block text-[11px] text-neutral-400 mb-1">
+                        Longitude
+                      </label>
                       <input
                         type="text"
                         value={lon}
@@ -231,7 +246,10 @@ export default function PipelineV2Page() {
                       value={selectedProvince}
                       onChange={(e) => {
                         setSelectedProvince(e.target.value);
-                        setExpected((prev) => ({ ...prev, province: e.target.value }));
+                        setExpected((prev) => ({
+                          ...prev,
+                          province: e.target.value,
+                        }));
                       }}
                       className="w-full bg-neutral-950 border border-neutral-800 p-2 text-xs text-white"
                     >
@@ -248,7 +266,9 @@ export default function PipelineV2Page() {
                       type="text"
                       placeholder="Expected Road / Jl. ..."
                       value={expected.road}
-                      onChange={(e) => setExpected({ ...expected, road: e.target.value })}
+                      onChange={(e) =>
+                        setExpected({ ...expected, road: e.target.value })
+                      }
                       className="w-full bg-neutral-950 border border-neutral-800 p-2 text-xs text-white"
                     />
                     <div className="grid grid-cols-2 gap-2">
@@ -256,14 +276,18 @@ export default function PipelineV2Page() {
                         type="text"
                         placeholder="Expected Kelurahan"
                         value={expected.village}
-                        onChange={(e) => setExpected({ ...expected, village: e.target.value })}
+                        onChange={(e) =>
+                          setExpected({ ...expected, village: e.target.value })
+                        }
                         className="w-full bg-neutral-950 border border-neutral-800 p-2 text-xs text-white"
                       />
                       <input
                         type="text"
                         placeholder="Expected Kecamatan"
                         value={expected.district}
-                        onChange={(e) => setExpected({ ...expected, district: e.target.value })}
+                        onChange={(e) =>
+                          setExpected({ ...expected, district: e.target.value })
+                        }
                         className="w-full bg-neutral-950 border border-neutral-800 p-2 text-xs text-white"
                       />
                     </div>
@@ -271,7 +295,9 @@ export default function PipelineV2Page() {
                       type="text"
                       placeholder="Expected Kota / Kabupaten"
                       value={expected.city}
-                      onChange={(e) => setExpected({ ...expected, city: e.target.value })}
+                      onChange={(e) =>
+                        setExpected({ ...expected, city: e.target.value })
+                      }
                       className="w-full bg-neutral-950 border border-neutral-800 p-2 text-xs text-white"
                     />
                   </div>
@@ -303,10 +329,14 @@ export default function PipelineV2Page() {
                       <input
                         type="checkbox"
                         checked={enableAIArbitration}
-                        onChange={(e) => setEnableAIArbitration(e.target.checked)}
+                        onChange={(e) =>
+                          setEnableAIArbitration(e.target.checked)
+                        }
                         className="accent-white"
                       />
-                      <span>AI Semantic Arbitration (Ambiguous Only)</span>
+                      <span>
+                        AI Cross-Match (Always — vs Enhanced Nominatim)
+                      </span>
                     </label>
                   </div>
 
@@ -333,7 +363,10 @@ export default function PipelineV2Page() {
                           className={`px-3 py-1 text-xs font-bold uppercase ${
                             latestRecord.aiValidation.status === "VALID"
                               ? "bg-green-950 text-green-400 border border-green-800"
-                              : "bg-red-950 text-red-400 border border-red-800"
+                              : latestRecord.aiValidation.status ===
+                                  "NEED_REVIEW"
+                                ? "bg-amber-950 text-amber-400 border border-amber-800"
+                                : "bg-red-950 text-red-400 border border-red-800"
                           }`}
                         >
                           {latestRecord.aiValidation.status}
@@ -343,7 +376,8 @@ export default function PipelineV2Page() {
                         </span>
                         {latestRecord.evidence?.finalDecision?.determinedBy && (
                           <span className="text-[10px] text-neutral-400 border border-neutral-800 px-2 py-1 uppercase">
-                            Engine: {latestRecord.evidence.finalDecision.determinedBy}
+                            Engine:{" "}
+                            {latestRecord.evidence.finalDecision.determinedBy}
                           </span>
                         )}
                       </div>
@@ -368,27 +402,35 @@ export default function PipelineV2Page() {
                       {latestRecord.evidence?.gisValidation.available ? (
                         <div className="text-xs space-y-1.5 pt-1">
                           <p className="text-[11px] text-neutral-500">
-                            Source: {latestRecord.evidence.gisValidation.source} (v
-                            {latestRecord.evidence.gisValidation.datasetVersion})
+                            Source: {latestRecord.evidence.gisValidation.source}{" "}
+                            (v
+                            {latestRecord.evidence.gisValidation.datasetVersion}
+                            )
                           </p>
-                          {latestRecord.evidence.gisValidation.comparisons.map((c) => (
-                            <div
-                              key={c.level}
-                              className="flex justify-between items-center border-b border-neutral-900 pb-1"
-                            >
-                              <span className="capitalize text-neutral-400">{c.level}:</span>
-                              <span
-                                className={`text-[11px] font-bold ${
-                                  c.match ? "text-green-400" : "text-red-400"
-                                }`}
+                          {latestRecord.evidence.gisValidation.comparisons.map(
+                            (c) => (
+                              <div
+                                key={c.level}
+                                className="flex justify-between items-center border-b border-neutral-900 pb-1"
                               >
-                                {c.gisValue || "(none)"} [{c.match ? "MATCH" : "MISMATCH"}]
-                              </span>
-                            </div>
-                          ))}
+                                <span className="capitalize text-neutral-400">
+                                  {c.level}:
+                                </span>
+                                <span
+                                  className={`text-[11px] font-bold ${c.match ? "text-green-400" : "text-red-400"}`}
+                                >
+                                  {c.nominatimValue || "(none)"} →{" "}
+                                  {c.gisValue || "(none)"} [
+                                  {c.match ? "MATCH" : "MISMATCH"}]
+                                </span>
+                              </div>
+                            ),
+                          )}
                         </div>
                       ) : (
-                        <p className="text-xs text-neutral-500">GIS layer unavailable.</p>
+                        <p className="text-xs text-neutral-500">
+                          GIS layer unavailable.
+                        </p>
                       )}
                     </div>
 
@@ -406,16 +448,21 @@ export default function PipelineV2Page() {
                         <div className="text-xs space-y-1 pt-1">
                           <p>
                             <span className="text-neutral-500">Nominatim:</span>{" "}
-                            {latestRecord.evidence.roadValidation.nominatimRoad || "(none)"}
+                            {latestRecord.evidence.roadValidation
+                              .nominatimRoad || "(none)"}
                           </p>
                           <p>
                             <span className="text-neutral-500">Expected:</span>{" "}
-                            {latestRecord.evidence.roadValidation.matchedRoad || "(none)"}
+                            {latestRecord.evidence.roadValidation.matchedRoad ||
+                              "(none)"}
                           </p>
                           <p>
-                            <span className="text-neutral-500">Similarity:</span>{" "}
+                            <span className="text-neutral-500">
+                              Similarity:
+                            </span>{" "}
                             {Math.round(
-                              latestRecord.evidence.roadValidation.nameSimilarity * 100
+                              latestRecord.evidence.roadValidation
+                                .nameSimilarity * 100,
                             )}
                             %
                           </p>
@@ -435,10 +482,82 @@ export default function PipelineV2Page() {
                           </p>
                         </div>
                       ) : (
-                        <p className="text-xs text-neutral-500">Road validation skipped.</p>
+                        <p className="text-xs text-neutral-500">
+                          Road validation skipped.
+                        </p>
                       )}
                     </div>
                   </div>
+
+                  {/* Cross-Match: AI vs Enhanced Nominatim */}
+                  {latestRecord.evidence?.crossMatch && (
+                    <div className="border border-neutral-800 p-4 space-y-3 bg-neutral-950">
+                      <div className="flex justify-between items-center">
+                        <h3 className="text-xs font-bold text-neutral-300 uppercase">
+                          AI vs Enhanced Nominatim (Cross-Match)
+                        </h3>
+                        <span className="text-[10px] px-1.5 py-0.5 border border-neutral-700 text-neutral-400 uppercase">
+                          {latestRecord.evidence.crossMatch.allMatched
+                            ? "AGREE"
+                            : "CONFLICT"}{" "}
+                          • {latestRecord.evidence.crossMatch.matchedLevels}/
+                          {latestRecord.evidence.crossMatch.comparedLevels}
+                        </span>
+                      </div>
+                      <div className="space-y-1.5">
+                        {latestRecord.evidence.crossMatch.comparisons.map(
+                          (c) => (
+                            <div
+                              key={c.level}
+                              className="grid grid-cols-[90px_1fr_1fr_auto] gap-2 items-center text-[11px] border-b border-neutral-900 pb-1.5"
+                            >
+                              <span className="capitalize text-neutral-500">
+                                {c.level}
+                              </span>
+                              <div>
+                                <span className="text-neutral-600 text-[9px] uppercase">
+                                  AI{" "}
+                                </span>
+                                <span className="text-neutral-300">
+                                  {c.aiValue || "—"}
+                                </span>
+                              </div>
+                              <div>
+                                <span className="text-neutral-600 text-[9px] uppercase">
+                                  Enhanced{" "}
+                                </span>
+                                <span
+                                  className={
+                                    c.match
+                                      ? "text-green-400"
+                                      : "text-amber-400"
+                                  }
+                                >
+                                  {c.enhancedValue || "—"}
+                                </span>
+                              </div>
+                              <span
+                                className={`text-[9px] font-bold uppercase ${
+                                  c.match ? "text-green-400" : "text-red-400"
+                                }`}
+                              >
+                                {c.match ? "MATCH" : c.conflictWith}
+                              </span>
+                            </div>
+                          ),
+                        )}
+                      </div>
+                      {latestRecord.evidence.enhancedAddress && (
+                        <p className="text-[10px] text-neutral-600 pt-1">
+                          Enhanced source:{" "}
+                          {latestRecord.evidence.enhancedAddress.source || "—"}
+                          {latestRecord.evidence.enhancedAddress.datasetVersion
+                            ? ` (v${latestRecord.evidence.enhancedAddress.datasetVersion})`
+                            : ""}
+                        </p>
+                      )}
+                    </div>
+                  )}
 
                   {/* Decision Reason & Error Tags */}
                   <div className="border border-neutral-800 p-4 space-y-2 bg-neutral-950">
@@ -465,7 +584,8 @@ export default function PipelineV2Page() {
                 </div>
               ) : (
                 <div className="border border-neutral-800 p-12 text-center text-neutral-600 text-xs">
-                  Run a validation test on the left to inspect traceable GIS and Road evidence.
+                  Run a validation test on the left to inspect traceable GIS and
+                  Road evidence.
                 </div>
               )}
             </div>
@@ -510,7 +630,9 @@ export default function PipelineV2Page() {
                                 : "text-red-400"
                             }
                           >
-                            {r.evidence.gisValidation.allMatched ? "MATCH" : "MISMATCH"}
+                            {r.evidence.gisValidation.allMatched
+                              ? "MATCH"
+                              : "MISMATCH"}
                           </span>
                         ) : (
                           <span className="text-neutral-500">N/A</span>
@@ -525,7 +647,9 @@ export default function PipelineV2Page() {
                                 : "text-red-400"
                             }
                           >
-                            {r.evidence.roadValidation.match ? "MATCH" : "WRONG"}
+                            {r.evidence.roadValidation.match
+                              ? "MATCH"
+                              : "WRONG"}
                           </span>
                         ) : (
                           <span className="text-neutral-500">N/A</span>
@@ -556,7 +680,10 @@ export default function PipelineV2Page() {
                   ))}
                   {records.length === 0 && (
                     <tr>
-                      <td colSpan={6} className="p-8 text-center text-neutral-600">
+                      <td
+                        colSpan={6}
+                        className="p-8 text-center text-neutral-600"
+                      >
                         No validation records available yet.
                       </td>
                     </tr>
@@ -582,7 +709,9 @@ export default function PipelineV2Page() {
                     className="w-full text-left p-3 hover:bg-neutral-900/60 transition flex justify-between items-center"
                   >
                     <div>
-                      <p className="text-xs font-bold text-white">{agg.province}</p>
+                      <p className="text-xs font-bold text-white">
+                        {agg.province}
+                      </p>
                       <p className="text-[10px] text-neutral-500">
                         Tested: {agg.totalTested} | Valid: {agg.validCount}
                       </p>
@@ -631,8 +760,8 @@ export default function PipelineV2Page() {
                         selectedRecap.priority === "CRITICAL"
                           ? "bg-red-950 text-red-400 border-red-800"
                           : selectedRecap.priority === "HIGH"
-                          ? "bg-yellow-950 text-yellow-400 border-yellow-800"
-                          : "bg-green-950 text-green-400 border-green-800"
+                            ? "bg-yellow-950 text-yellow-400 border-yellow-800"
+                            : "bg-green-950 text-green-400 border-green-800"
                       }`}
                     >
                       Priority: {selectedRecap.priority}
@@ -640,8 +769,12 @@ export default function PipelineV2Page() {
                   </div>
 
                   <div className="text-xs space-y-2">
-                    <p className="text-neutral-300 font-semibold">{selectedRecap.summary}</p>
-                    <p className="text-neutral-400">{selectedRecap.qualityAssessment}</p>
+                    <p className="text-neutral-300 font-semibold">
+                      {selectedRecap.summary}
+                    </p>
+                    <p className="text-neutral-400">
+                      {selectedRecap.qualityAssessment}
+                    </p>
                   </div>
 
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
@@ -670,7 +803,8 @@ export default function PipelineV2Page() {
                 </div>
               ) : (
                 <div className="border border-neutral-800 p-8 text-center text-xs text-neutral-600">
-                  Select a province on the left to inspect its aggregated AI recap.
+                  Select a province on the left to inspect its aggregated AI
+                  recap.
                 </div>
               )}
             </div>
