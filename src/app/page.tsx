@@ -1,13 +1,22 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import Link from "next/link";
-import { Coordinate, ExpectedAddress } from "@/types";
-import { DIY_KABUPATEN, KECAMATAN_DIY } from "@/lib/kecamatan";
+import {
+  KABUPATEN_BY_PROVINSI,
+  KECAMATAN_BY_KABUPATEN,
+  PROVINSI,
+} from "@/lib/kecamatan";
 import { INDONESIA_PROVINCES } from "@/lib/sampler";
+import { ExpectedAddress } from "@/types";
+import Link from "next/link";
 import { useSearchParams } from "next/navigation";
+import { Suspense, useEffect, useState } from "react";
 
 export type Method = "e2e" | "gemini" | "nominatim";
+
+// nama resmi provinsi → kode BPS (cache sekali, u/ cascade select)
+const PROV_KODE: Record<string, string> = Object.fromEntries(
+  PROVINSI.map((p) => [p.nama, p.kode]),
+);
 
 const EXPECTED_DEFAULT: ExpectedAddress = {
   road: "",
@@ -41,7 +50,7 @@ interface NominatimResult {
   confidence?: number;
 }
 
-export default function Home() {
+function HomeContent() {
   const query = useSearchParams();
   const mode = query.get("mode");
   const [method, setMethod] = useState<Method>("e2e");
@@ -50,7 +59,7 @@ export default function Home() {
   );
   const [lat, setLat] = useState("-7.8495154");
   const [lon, setLon] = useState("110.3593989");
-  const [kabupaten, setKabupaten] = useState("Bantul");
+  const [kabupatenKode, setKabupatenKode] = useState("34.02"); // Bantul
   const [kecamatanName, setKecamatanName] = useState("Sewon");
   const [expected, setExpected] = useState<ExpectedAddress>(EXPECTED_DEFAULT);
   const [sourceText, setSourceText] = useState("");
@@ -61,63 +70,43 @@ export default function Home() {
     useState<NominatimResult | null>(null);
   const [lastPrompt, setLastPrompt] = useState("");
 
-  const kecamatans = KECAMATAN_DIY[kabupaten] ?? [];
+  const provKode = PROV_KODE[selectedProvince] ?? "";
+  const kabupatenList = KABUPATEN_BY_PROVINSI[provKode] ?? [];
+  const kabupatenName =
+    KABUPATEN_BY_PROVINSI[provKode]?.find((k) => k.kode === kabupatenKode)
+      ?.nama ?? "";
+  const kecamatans = KECAMATAN_BY_KABUPATEN[kabupatenKode] ?? [];
 
   const handleProvinceChange = (provName: string) => {
     setSelectedProvince(provName);
+    const pKode = PROV_KODE[provName] ?? "";
+    const kabs = KABUPATEN_BY_PROVINSI[pKode] ?? [];
     setExpected((prev) => ({
       ...prev,
       province: provName,
+      city: kabs[0]?.kode ? "" : prev.city,
+      district: "",
     }));
-    // If not DIY, fallback coordinate or center bounds from INDONESIA_PROVINCES
-    if (provName !== "Daerah Istimewa Yogyakarta") {
+    if (kabs.length > 0) {
+      // isi kabupaten pertama + kecamatan pertamanya, biar cascade langsung siap
+      setKab(kabs[0].kode, provName);
+    } else {
+      setKabupatenKode("");
+      setKecamatanName("");
+      // centering koordinat ke tengah provinsi
       const p = INDONESIA_PROVINCES.find((x) => x.name === provName);
       if (p) {
-        const midLat = ((p.bounds[0] + p.bounds[2]) / 2).toFixed(6);
-        const midLon = ((p.bounds[1] + p.bounds[3]) / 2).toFixed(6);
-        setLat(midLat);
-        setLon(midLon);
-        setKabupaten("");
-        setKecamatanName("");
-        setExpected((prev) => ({
-          ...prev,
-          city: "",
-          district: "",
-          province: provName,
-        }));
+        setLat(((p.bounds[0] + p.bounds[2]) / 2).toFixed(6));
+        setLon(((p.bounds[1] + p.bounds[3]) / 2).toFixed(6));
       }
-    } else {
-      setKab("Bantul");
     }
   };
 
-  const applyKecamatan = (name: string) => {
-    const k = kecamatans.find((x) => x.name === name);
-    if (k) {
-      setLat(k.lat.toFixed(6));
-      setLon(k.lon.toFixed(6));
-      setExpected((prev) => ({
-        ...prev,
-        district: k.name,
-        city: kabupaten,
-        province: selectedProvince,
-      }));
-    }
-  };
-
-  useEffect(() => {
-    console.log("MODE: ", mode);
-    if (mode === "gemini") {
-      setMethod("gemini");
-    }
-    if (mode === "nominatim") {
-      setMethod("nominatim");
-    }
-  }, [mode]);
-
-  const setKab = (kab: string) => {
-    setKabupaten(kab);
-    const first = KECAMATAN_DIY[kab]?.[0];
+  const setKab = (kabKode: string, provName = selectedProvince) => {
+    const kabs = KABUPATEN_BY_PROVINSI[PROV_KODE[provName] ?? ""] ?? [];
+    const kab = kabs.find((k) => k.kode === kabKode);
+    setKabupatenKode(kabKode);
+    const first = KECAMATAN_BY_KABUPATEN[kabKode]?.[0];
     if (first) {
       setKecamatanName(first.name);
       setLat(first.lat.toFixed(6));
@@ -125,7 +114,21 @@ export default function Home() {
       setExpected((prev) => ({
         ...prev,
         district: first.name,
-        city: kab,
+        city: kab?.nama ? kab.nama.replace(/^(Kabupaten|Kota) /, "") : "",
+        province: provName,
+      }));
+    }
+  };
+
+  const applyKecamatan = (name: string, kab = kabupatenName) => {
+    const k = kecamatans.find((x) => x.name === name);
+    if (k) {
+      setLat(k.lat.toFixed(6));
+      setLon(k.lon.toFixed(6));
+      setExpected((prev) => ({
+        ...prev,
+        district: k.name,
+        city: kab ? kab.replace(/^(Kabupaten|Kota) /, "") : prev.city,
         province: selectedProvince,
       }));
     }
@@ -202,7 +205,15 @@ export default function Home() {
       exp.province ||
       exp.postcode,
     );
-
+  useEffect(() => {
+    console.log("MODE: ", mode);
+    if (mode === "gemini") {
+      setMethod("gemini");
+    }
+    if (mode === "nominatim") {
+      setMethod("nominatim");
+    }
+  }, [mode]);
   return (
     <main className="min-h-screen bg-neutral-950 text-neutral-100 p-6 md:p-12 font-mono">
       <div className="max-w-7xl mx-auto space-y-8">
@@ -308,19 +319,17 @@ export default function Home() {
               </div>
               <div>
                 <label className="block text-xs text-neutral-400 mb-1">
-                  Kabupaten / Kota{" "}
-                  {selectedProvince !== "Daerah Istimewa Yogyakarta" &&
-                    "(DIY only presets)"}
+                  Kabupaten / Kota
                 </label>
                 <select
-                  value={kabupaten}
-                  disabled={selectedProvince !== "Daerah Istimewa Yogyakarta"}
+                  value={kabupatenKode}
+                  disabled={kabupatenList.length === 0}
                   onChange={(e) => setKab(e.target.value)}
                   className="w-full bg-neutral-950 border border-neutral-800 p-2 text-xs text-white disabled:opacity-50"
                 >
-                  {DIY_KABUPATEN.map((k) => (
-                    <option key={k} value={k}>
-                      {k}
+                  {kabupatenList.map((k) => (
+                    <option key={k.kode} value={k.kode}>
+                      {k.nama}
                     </option>
                   ))}
                 </select>
@@ -331,7 +340,7 @@ export default function Home() {
                 </label>
                 <select
                   value={kecamatanName}
-                  disabled={selectedProvince !== "Daerah Istimewa Yogyakarta"}
+                  disabled={kecamatans.length === 0}
                   onChange={(e) => selectKecamatan(e.target.value)}
                   className="w-full bg-neutral-950 border border-neutral-800 p-2 text-xs text-white disabled:opacity-50"
                 >
@@ -570,6 +579,16 @@ export default function Home() {
         )}
       </div>
     </main>
+  );
+}
+
+export default function Home() {
+  return (
+    <Suspense
+      fallback={<div className="text-neutral-500 text-xs p-6">Loading…</div>}
+    >
+      <HomeContent />
+    </Suspense>
   );
 }
 
