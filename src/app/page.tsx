@@ -239,9 +239,15 @@ function HomeContent() {
             [
               {
                 id: "e2e",
-                title: "Default — End to End",
+                title: "V1 Pipeline — Batch Sampler",
                 desc: "Nominatim → Gemini → simpan ke correction log",
                 href: "/pipeline",
+              },
+              {
+                id: "v2",
+                title: "V2 Pipeline — GIS & Road Ground Truth",
+                desc: "GIS Boundary + Road distance + AI arbitration + Province Recap",
+                href: "/pipeline-v2",
               },
               {
                 id: "gemini",
