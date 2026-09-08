@@ -25,9 +25,11 @@ const PolygonLayer = memo(function PolygonLayer({
         return (
           <Polygon
             key={`${layer}-${f.kode}`}
-            positions={f.polygons.map((ring) =>
-              ring.map(
-                ([lon, lat]) => [lat, lon] as unknown as [number, number],
+            positions={f.polygons.map((poly) =>
+              poly.map((ring) =>
+                ring.map(
+                  ([lon, lat]) => [lat, lon] as unknown as [number, number],
+                ),
               ),
             )}
             pathOptions={{

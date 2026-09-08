@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import dynamic from "next/dynamic";
 import {
   Coordinate,
   ExpectedAddress,
@@ -10,22 +11,153 @@ import {
   ValidationRecord,
 } from "@/types";
 import { INDONESIA_PROVINCES } from "@/lib/sampler";
+import {
+  KABUPATEN_BY_PROVINSI,
+  KECAMATAN_BY_KABUPATEN,
+  PROVINSI,
+} from "@/lib/kecamatan";
+import { AdminLevel } from "@/lib/map/data";
+
+const BoundaryMap = dynamic(() => import("@/components/map/BoundaryMap"), {
+  ssr: false,
+});
+
+const PROV_KODE: Record<string, string> = Object.fromEntries(
+  PROVINSI.map((p) => [p.nama, p.kode]),
+);
 
 export default function PipelineV2Page() {
   const [activeTab, setActiveTab] = useState<"test" | "logs" | "recap">("test");
 
-  // Coordinate form inputs
-  const [lat, setLat] = useState("-6.2146");
-  const [lon, setLon] = useState("106.84851");
-  const [selectedProvince, setSelectedProvince] = useState("DKI Jakarta");
+  // Coordinate form inputs & Wilayah selection
+  const [selectedProvince, setSelectedProvince] = useState(
+    "Daerah Istimewa Yogyakarta",
+  );
+  const [autoAssign, setAutoAssign] = useState(true);
+  const [kabupatenKode, setKabupatenKode] = useState("34.02"); // Bantul
+  const [kecamatanName, setKecamatanName] = useState("Sewon");
+  const [lat, setLat] = useState("-7.8495154");
+  const [lon, setLon] = useState("110.3593989");
   const [expected, setExpected] = useState<ExpectedAddress>({
     road: "",
     village: "",
-    district: "",
-    city: "",
-    province: "DKI Jakarta",
+    district: "Sewon",
+    city: "Bantul",
+    province: "Daerah Istimewa Yogyakarta",
     postcode: "",
   });
+
+  const provKode = PROV_KODE[selectedProvince] ?? "";
+  const testKabupatenList = KABUPATEN_BY_PROVINSI[provKode] ?? [];
+  const testKabupaten =
+    testKabupatenList.find((k) => k.kode === kabupatenKode)?.nama ?? "";
+  const testKabupatenPlain = testKabupaten.replace(/^(Kabupaten|Kota) /, "");
+  const kecamatans = KECAMATAN_BY_KABUPATEN[kabupatenKode] ?? [];
+
+  const handleProvinceChange = (provName: string) => {
+    if (!autoAssign) return;
+    setSelectedProvince(provName);
+    const pKode = PROV_KODE[provName] ?? "";
+    const kabs = KABUPATEN_BY_PROVINSI[pKode] ?? [];
+    if (kabs.length > 0) {
+      const firstKab = kabs[0];
+      setKabupatenKode(firstKab.kode);
+      const list = KECAMATAN_BY_KABUPATEN[firstKab.kode] ?? [];
+      const plain = firstKab.nama.replace(/^(Kabupaten|Kota) /, "");
+      if (list.length > 0) {
+        const firstKec = list[0];
+        setKecamatanName(firstKec.name);
+        setLat(firstKec.lat.toFixed(6));
+        setLon(firstKec.lon.toFixed(6));
+        setExpected((prev) => ({
+          ...prev,
+          district: firstKec.name,
+          city: plain,
+          province: provName,
+        }));
+      } else {
+        setKecamatanName("");
+        setExpected((prev) => ({
+          ...prev,
+          district: "",
+          city: plain,
+          province: provName,
+        }));
+      }
+    } else {
+      setKabupatenKode("");
+      setKecamatanName("");
+      const p = INDONESIA_PROVINCES.find((x) => x.name === provName);
+      if (p) {
+        setLat(((p.bounds[0] + p.bounds[2]) / 2).toFixed(6));
+        setLon(((p.bounds[1] + p.bounds[3]) / 2).toFixed(6));
+      }
+      setExpected((prev) => ({
+        ...prev,
+        district: "",
+        city: "",
+        province: provName,
+      }));
+    }
+  };
+
+  const handleKabupatenChange = (kabKode: string) => {
+    if (!autoAssign) return;
+    setKabupatenKode(kabKode);
+    const kab = testKabupatenList.find((k) => k.kode === kabKode);
+    const plain = kab?.nama ? kab.nama.replace(/^(Kabupaten|Kota) /, "") : "";
+    const list = KECAMATAN_BY_KABUPATEN[kabKode] ?? [];
+    if (list.length > 0) {
+      const first = list[0];
+      setKecamatanName(first.name);
+      setLat(first.lat.toFixed(6));
+      setLon(first.lon.toFixed(6));
+      setExpected((prev) => ({
+        ...prev,
+        district: first.name,
+        city: plain,
+        province: selectedProvince,
+      }));
+    } else {
+      setKecamatanName("");
+      setExpected((prev) => ({
+        ...prev,
+        district: "",
+        city: plain,
+        province: selectedProvince,
+      }));
+    }
+  };
+
+  const handleKecamatanChange = (name: string) => {
+    if (!autoAssign) return;
+    // Update selected kecamatan & sync expected address
+    setKecamatanName(name);
+    const item = kecamatans.find((k) => k.name === name);
+    if (item) {
+      setLat(item.lat.toFixed(6));
+      setLon(item.lon.toFixed(6));
+      setExpected((prev) => ({
+        ...prev,
+        district: item.name,
+        city: testKabupatenPlain,
+        province: selectedProvince,
+      }));
+    }
+  };
+
+  // Clear province/kabupaten/kecamatan selections (keep manual lat/lon)
+  const handleClearLocation = () => {
+    setSelectedProvince("");
+    setKabupatenKode("");
+    setKecamatanName("");
+    setExpected((prev) => ({
+      ...prev,
+      district: "",
+      city: "",
+      province: "",
+    }));
+  };
 
   // Toggles
   const [enableGIS, setEnableGIS] = useState(true);
@@ -44,6 +176,12 @@ export default function PipelineV2Page() {
     null,
   );
   const [recapLoading, setRecapLoading] = useState(false);
+  const [copiedCoord, setCopiedCoord] = useState(false);
+  const [mapLevels, setMapLevels] = useState<AdminLevel[]>([
+    "provinsi",
+    "kabupaten",
+    "kecamatan",
+  ]);
 
   useEffect(() => {
     fetchRecords();
@@ -89,7 +227,7 @@ export default function PipelineV2Page() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           coordinate: { lat: parseFloat(lat), lon: parseFloat(lon) },
-          expected: expected.province ? expected : undefined,
+          expected: expected.province && autoAssign ? expected : undefined,
           options: {
             enableGIS,
             enableRoad,
@@ -104,6 +242,11 @@ export default function PipelineV2Page() {
       }
 
       const data: ValidationRecord = await res.json();
+
+      console.log(
+        `[validate] Response API data: ${JSON.stringify(data, null, 2)}`,
+      );
+
       setLatestRecord(data);
       fetchRecords();
       fetchAggregates();
@@ -210,6 +353,16 @@ export default function PipelineV2Page() {
                 <h2 className="text-xs font-bold uppercase tracking-wider text-neutral-300">
                   Target Coordinate & Address
                 </h2>
+                {/* Auto assign toggle */}
+                <label className="flex items-center gap-2 text-xs text-neutral-400">
+                  <input
+                    type="checkbox"
+                    checked={autoAssign}
+                    onChange={(e) => setAutoAssign(e.target.checked)}
+                    className="accent-white"
+                  />
+                  Auto assign coordinates from dropdown selection
+                </label>
                 <form onSubmit={handleValidate} className="space-y-4">
                   <div className="grid grid-cols-2 gap-2">
                     <div>
@@ -240,17 +393,12 @@ export default function PipelineV2Page() {
 
                   <div className="pt-2 border-t border-neutral-800 space-y-2">
                     <label className="block text-[11px] text-neutral-400">
-                      Expected Province Boundary (Ground Truth)
+                      Provinsi
                     </label>
                     <select
                       value={selectedProvince}
-                      onChange={(e) => {
-                        setSelectedProvince(e.target.value);
-                        setExpected((prev) => ({
-                          ...prev,
-                          province: e.target.value,
-                        }));
-                      }}
+                      onChange={(e) => handleProvinceChange(e.target.value)}
+                      disabled={!autoAssign}
                       className="w-full bg-neutral-950 border border-neutral-800 p-2 text-xs text-white"
                     >
                       {INDONESIA_PROVINCES.map((p) => (
@@ -262,6 +410,56 @@ export default function PipelineV2Page() {
                   </div>
 
                   <div className="space-y-2">
+                    <label className="block text-[11px] text-neutral-400">
+                      Kabupaten / Kota
+                    </label>
+                    <select
+                      value={kabupatenKode}
+                      disabled={testKabupatenList.length === 0 || !autoAssign}
+                      onChange={(e) => handleKabupatenChange(e.target.value)}
+                      className="w-full bg-neutral-950 border border-neutral-800 p-2 text-xs text-white disabled:opacity-50"
+                    >
+                      {testKabupatenList.map((k) => (
+                        <option key={k.kode} value={k.kode}>
+                          {k.nama}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="space-y-2">
+                    <label className="block text-[11px] text-neutral-400">
+                      Kecamatan
+                    </label>
+                    <select
+                      value={kecamatanName}
+                      disabled={kecamatans.length === 0 || !autoAssign}
+                      onChange={(e) => handleKecamatanChange(e.target.value)}
+                      className="w-full bg-neutral-950 border border-neutral-800 p-2 text-xs text-white disabled:opacity-50"
+                    >
+                      {kecamatans.map((k) => (
+                        <option key={k.name} value={k.name}>
+                          {k.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* Clear location button */}
+                  <div className="pt-2 mb-2">
+                    <button
+                      type="button"
+                      onClick={handleClearLocation}
+                      className="px-3 py-1 text-xs bg-neutral-800 text-neutral-200 border border-neutral-600 hover:bg-neutral-700"
+                    >
+                      Clear Provinsi/Kabupaten/Kecamatan
+                    </button>
+                  </div>
+
+                  <div className="space-y-2 pt-2 border-t border-neutral-800">
+                    <span className="text-[10px] text-neutral-500 uppercase font-bold">
+                      Expected Address Details
+                    </span>
                     <input
                       type="text"
                       placeholder="Expected Road / Jl. ..."
@@ -486,6 +684,92 @@ export default function PipelineV2Page() {
                           Road validation skipped.
                         </p>
                       )}
+                    </div>
+                  </div>
+
+                  {/* Polygon & Point Boundary Map Preview */}
+                  <div className="border border-neutral-800 p-4 space-y-3 bg-neutral-950">
+                    <div className="flex flex-wrap justify-between items-center gap-2">
+                      <div>
+                        <h3 className="text-xs font-bold text-neutral-300 uppercase">
+                          GIS Polygon Boundary Map & Location Pin
+                        </h3>
+                        <p className="text-[10px] text-neutral-500">
+                          Visualisasi polygon batas administratif wilayah &
+                          posisi koordinat input
+                        </p>
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        {/* Copy lat,lng Button */}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const coordStr = `${latestRecord.coordinate.lat},${latestRecord.coordinate.lon}`;
+                            navigator.clipboard.writeText(coordStr);
+                            setCopiedCoord(true);
+                            setTimeout(() => setCopiedCoord(false), 2000);
+                          }}
+                          className="px-2.5 py-1 text-[11px] bg-neutral-900 border border-neutral-700 hover:border-neutral-500 text-neutral-200 transition flex items-center gap-1.5"
+                          title="Copy lat,lon to clipboard"
+                        >
+                          <span>
+                            {latestRecord.coordinate.lat.toFixed(6)},{" "}
+                            {latestRecord.coordinate.lon.toFixed(6)}
+                          </span>
+                          <span className="text-neutral-400 font-bold">
+                            {copiedCoord ? "[Copied!]" : "[Copy Lat,Lng]"}
+                          </span>
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Admin Level Filters */}
+                    <div className="flex flex-wrap items-center gap-2 pt-1 border-t border-neutral-900">
+                      <span className="text-[10px] text-neutral-500 uppercase">
+                        Tampilkan Polygon:
+                      </span>
+                      {(
+                        [
+                          { key: "provinsi", label: "Provinsi" },
+                          { key: "kabupaten", label: "Kabupaten" },
+                          { key: "kecamatan", label: "Kecamatan" },
+                        ] as const
+                      ).map(({ key, label }) => {
+                        const active = mapLevels.includes(key);
+                        return (
+                          <button
+                            key={key}
+                            type="button"
+                            onClick={() =>
+                              setMapLevels((prev) =>
+                                active
+                                  ? prev.filter((k) => k !== key)
+                                  : [...prev, key],
+                              )
+                            }
+                            className={`px-2 py-0.5 text-[10px] uppercase border transition ${
+                              active
+                                ? "bg-white text-black border-white font-bold"
+                                : "bg-neutral-900 text-neutral-400 border-neutral-800 hover:border-neutral-700"
+                            }`}
+                          >
+                            {label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <div className="pt-2">
+                      <BoundaryMap
+                        lat={latestRecord.coordinate.lat}
+                        lon={latestRecord.coordinate.lon}
+                        provinceName={
+                          latestRecord.expectedAddress?.province ||
+                          latestRecord.nominatimResult?.state ||
+                          selectedProvince
+                        }
+                        levels={mapLevels}
+                      />
                     </div>
                   </div>
 

@@ -134,24 +134,26 @@ export async function executeEnhancedPipeline(
     }
   }
 
-  // 4. Cross-match AI vs enhanced Nominatim (per level)
+  // 4. Cross-match AI vs Nominatim (per level) – GIS/road are supplemental
   const crossMatch = buildCrossMatch(
     aiAnalysisResult,
     expected,
-    enhancedAddress,
+    {
+      province: nominatimResult.state,
+      city: nominatimResult.city,
+      district: nominatimResult.district || nominatimResult.subdistrict,
+      village: nominatimResult.village,
+    },
     roadValidation,
     nominatimResult,
   );
 
-  // 5. Final decision = reconcile deterministic (GIS+road) with AI cross-match
-  const { finalStatus, determinedBy, confidenceScore, reason, finalErrors } =
-    reconcileDecision(
-      deterministicErrors,
-      crossMatch,
-      aiAnalysisResult,
-      gisValidation,
-      roadValidation,
-    );
+  // 5. Final decision – prioritize AI vs Nominatim; ignore deterministic GIS/road mismatches
+  const finalStatus = aiAnalysisResult?.status ?? "VALID";
+  const determinedBy = aiAnalysisResult ? "ai_arbitration" : "fallback";
+  const confidenceScore = aiAnalysisResult?.confidenceScore ?? 1.0;
+  const reason = aiAnalysisResult?.notes ?? "AI vs Nominatim comparison";
+  const finalErrors: ErrorType[] = [];
 
   const finalRecordErrors = Array.from(
     new Set([...finalErrors, ...deterministicErrors]),
@@ -357,130 +359,4 @@ function buildCrossMatch(
   };
 }
 
-interface ReconcileResult {
-  finalStatus: ValidationStatus;
-  determinedBy:
-    | "cross_match_ai_vs_enhanced"
-    | "deterministic_gis_road"
-    | "ai_arbitration"
-    | "fallback";
-  confidenceScore: number;
-  reason: string;
-  finalErrors: ErrorType[];
-}
-
-/**
- * Decide the final status: deterministic GIS/road mismatch wins over AI,
- * otherwise AI's verdict stands, with all cross-match evidence surfaced.
- */
-function reconcileDecision(
-  deterministicErrors: ErrorType[],
-  crossMatch: {
-    allMatched: boolean;
-    matchedLevels: number;
-    comparedLevels: number;
-    comparisons: CrossMatchComparison[];
-  },
-  ai:
-    | {
-        status: ValidationStatus;
-        confidenceScore: number;
-        notes?: string;
-        errorTypes?: ErrorType[];
-      }
-    | undefined,
-  gis: { available: boolean },
-  road: { available: boolean; match: boolean },
-): ReconcileResult {
-  const deterministicMismatch = deterministicErrors.length > 0;
-
-  // AI was disabled: fall back to deterministic-only decision
-  if (!ai) {
-    if (deterministicMismatch) {
-      return {
-        finalStatus: "INCORRECT",
-        determinedBy: "deterministic_gis_road",
-        confidenceScore: Math.max(30, 95 - deterministicErrors.length * 15),
-        reason: `Deterministic GIS/road mismatch: ${deterministicErrors.join(", ")}.`,
-        finalErrors: deterministicErrors,
-      };
-    }
-    return {
-      finalStatus: gis.available ? "VALID" : "NEED_REVIEW",
-      determinedBy: "deterministic_gis_road",
-      confidenceScore: 90,
-      reason: crossMatch.allMatched
-        ? "Enhanced pipeline confirms all admin levels (GIS shapefile and/or Nominatim)."
-        : "Partial admin levels confirmed; some levels unverifiable.",
-      finalErrors: [],
-    };
-  }
-
-  // 1) Deterministic GIS/road mismatch -> INCORRECT regardless of AI
-  if (deterministicMismatch) {
-    const aiAgrees = ai.status === "INCORRECT" || ai.status === "NEED_REVIEW";
-    return {
-      finalStatus: "INCORRECT",
-      determinedBy: "cross_match_ai_vs_enhanced",
-      confidenceScore: aiAgrees
-        ? Math.min(ai.confidenceScore, 90)
-        : Math.max(55, 95 - deterministicErrors.length * 12),
-      reason: `AI cross-matched against enhanced Nominatim. Deterministic GIS/road mismatch confirmed: ${deterministicErrors.join(", ")} (AI says ${ai.status}).`,
-      finalErrors: deterministicErrors,
-    };
-  }
-
-  // 2) Deterministic clean: rely on cross-match of AI vs enhanced.
-  //    A "conflict" is a level where BOTH sides claim a value AND they differ
-  //    (ai-only). Unverifiable levels (ground truth missing, AI no opinion)
-  //    are NOT conflicts — they reduce coverage, not correctness.
-  const conflicts = crossMatch.comparisons.filter(
-    (c) => !c.match && c.conflictWith === "ai-only",
-  ).length;
-  const decisiveClean = conflicts === 0 && crossMatch.matchedLevels >= 3; // province+city+district resolved & agree
-
-  if (ai.status === "INCORRECT" && !decisiveClean) {
-    return {
-      finalStatus: "INCORRECT",
-      determinedBy: "ai_arbitration",
-      confidenceScore: ai.confidenceScore,
-      reason: `AI flagged errors (${(ai.errorTypes || []).join(", ") || "none"}) and enhanced pipeline shows unresolved conflicts (${conflicts}).`,
-      finalErrors: ai.errorTypes || [],
-    };
-  }
-
-  if (ai.status === "INCORRECT" && decisiveClean) {
-    // AI claims incorrect but enhanced (shapefile + admin cross-match) agree
-    // on every resolvable level: determinism/GIS is ground truth here.
-    return {
-      finalStatus: "VALID",
-      determinedBy: "cross_match_ai_vs_enhanced",
-      confidenceScore: Math.max(ai.confidenceScore, 85),
-      reason: `AI reported INCORRECT but enhanced Nominatim (shapefile ${crossMatch.matchedLevels}/${crossMatch.comparedLevels} levels agreed, 0 conflicts) says VALID. AI overridden by cross-match.`,
-      finalErrors: [],
-    };
-  }
-
-  if (ai.status === "NEED_REVIEW" && !decisiveClean) {
-    return {
-      finalStatus: "NEED_REVIEW",
-      determinedBy: "ai_arbitration",
-      confidenceScore: ai.confidenceScore,
-      reason: ai.notes || "AI requested manual review after cross-match.",
-      finalErrors: ai.errorTypes || [],
-    };
-  }
-
-  // AI VALID + deterministic clean -> VALID
-  return {
-    finalStatus: "VALID",
-    determinedBy: "cross_match_ai_vs_enhanced",
-    confidenceScore: Math.round(
-      (ai.confidenceScore + (decisiveClean ? 100 : 70)) / 2,
-    ),
-    reason: crossMatch.allMatched
-      ? "AI and enhanced Nominatim (GIS shapefile + road) agree on every admin level."
-      : `AI validated, enhanced pipeline confirmed ${crossMatch.matchedLevels}/${crossMatch.comparedLevels} levels (${conflicts} conflicts).`,
-    finalErrors: [],
-  };
-}
+// Note: reconcileDecision removed; decision now based directly on AI vs Nominatim comparison.

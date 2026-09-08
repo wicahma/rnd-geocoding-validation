@@ -23,6 +23,7 @@ interface RawFC {
 const toFeatures = (raw: unknown): BoundaryFeature[] =>
   ((raw as RawFC).features || []).map((f) => {
     const coords = f.geometry?.coordinates || [];
+    // MultiPolygon => coords is already array-of-polygons; Polygon => wrap once.
     const polys = Array.isArray(coords[0]?.[0]?.[0])
       ? coords
       : ([coords] as unknown as [number, number][][][]);
